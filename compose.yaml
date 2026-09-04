@@ -1,0 +1,313 @@
+# Infraestructura compartida del dominio MTO y las tres aplicaciones que la usan.
+#
+# La infraestructura no lleva 'profiles:', asi que arranca siempre. Cada aplicacion lleva
+# 'profiles: [all, <nombre>]', de modo que:
+#
+#   docker compose --profile all up -d                              # todo
+#   docker compose up -d                                            # solo infraestructura
+#   docker compose --profile stock up -d                            # infraestructura + mto-stock
+#   docker compose --profile configuration --profile gateway up -d  # dos de tres
+#
+# El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
+# arrancarlo desde el IDE contra esta misma infraestructura. Por eso Keycloak y el colector OTLP
+# se alcanzan por el HOST con un nombre estable (auth.mto.local / otel.mto.local) y no por el
+# nombre del servicio de compose: la URL es la misma se ejecute el servicio dentro o fuera de aqui.
+#
+# Un solo broker para las dos aplicaciones. Cuando cada repositorio levantaba el suyo,
+# mto-configuration publicaba en uno y mto-stock escuchaba en otro: los mensajes no llegaban y
+# nada daba error. Es el motivo principal de que exista este fichero.
+name: mto-platform
+
+services:
+
+  # ---------------------------------------------------------------------------------------------
+  # Infraestructura. Sin 'profiles': arranca siempre.
+  # ---------------------------------------------------------------------------------------------
+
+  # Un unico servidor para las dos bases de datos. Los usuarios y las bases los crea
+  # postgres/init/01-databases.sql, que el contenedor ejecuta en la PRIMERA inicializacion.
+  postgres:
+    image: postgres:17-alpine
+    container_name: mto-postgres
+    restart: unless-stopped
+    environment:
+      # Base y superusuario del propio contenedor. Las de las aplicaciones son otras, y las crea
+      # el script de init: ninguna aplicacion se conecta con este usuario.
+      POSTGRES_DB: ${POSTGRES_DB:-mto}
+      POSTGRES_USER: ${POSTGRES_USER:-mto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_CONFIGURATION_DB: ${MTO_CONFIGURATION_DB:-mto_configuration_db}
+      MTO_CONFIGURATION_USER: ${MTO_CONFIGURATION_USER:-mto_configuration_user}
+      MTO_CONFIGURATION_PASSWORD: ${MTO_CONFIGURATION_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_CONFIGURATION_SCHEMA: ${MTO_CONFIGURATION_SCHEMA:-mto_configuration}
+      MTO_STOCK_DB: ${MTO_STOCK_DB:-mto_stock}
+      MTO_STOCK_USER: ${MTO_STOCK_USER:-mto_stock_user}
+      MTO_STOCK_PASSWORD: ${MTO_STOCK_PASSWORD:?falta en .env, copiese .env.example}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Cache de las dos aplicaciones. No guarda nada que no este en PostgreSQL: con
+  # APP_CACHE_ENABLED=false las aplicaciones funcionan igual, solo que consultando siempre la base.
+  #
+  # maxmemory-policy no es un ajuste fino: con el valor por defecto (noeviction) un Redis lleno
+  # rechaza toda escritura con un error de memoria, y quedaria una cache que ya no cachea y que no
+  # se recupera sola. Con allkeys-lru tira lo que menos se usa, que es lo que se espera de una cache.
+  redis:
+    image: redis:7.4-alpine
+    container_name: mto-redis
+    restart: unless-stopped
+    command: >-
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?falta en .env, copiese .env.example}
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --appendonly no
+      --save 300 1
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta en .env, copiese .env.example}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    # El volumen no es durabilidad -una cache perdida se rellena sola-, sino evitar el arranque en
+    # frio tras un 'docker compose restart'.
+    volumes:
+      - redis_data:/data
+    # Un socket abierto en el 6379 no dice que Redis acepte comandos: con requirepass, un PING sin
+    # autenticar responde error. Se sondea autenticado.
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # EL broker, en singular. mto-configuration publica los eventos de datos maestros aqui y
+  # mto-stock los consume de aqui. Las dos aplicaciones usan el mismo usuario: repartir
+  # credenciales por servicio es una decision de explotacion, no del entorno local.
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: mto-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-mto}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    # Un socket abierto en el 5672 no significa que el broker acepte ya declaraciones: se sondea
+    # con rabbitmq-diagnostics, que es lo que responde cuando el nodo esta de verdad listo.
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Keycloak 26 usa hostname v2: el puerto va dentro de la URL de --hostname, no en un
+  # --hostname-port aparte. Con la URL completa, el modo estricto (el de por defecto) es justo lo
+  # que se quiere: fija el 'iss' de los tokens a http://auth.mto.local:8082 sea cual sea la
+  # cabecera Host de la peticion. Un emisor que variase segun quien llama no coincidiria con
+  # KEYCLOAK_ISSUER_URI y la validacion fallaria.
+  #
+  # --import-realm carga /opt/keycloak/data/import al arrancar. Eso deja el realm BASE: los
+  # clientes y roles de cada servicio los aporta su importacion parcial, que aplica
+  # keycloak/apply-partials.sh una vez el servidor esta arriba. Ver README.md.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    container_name: mto-keycloak
+    restart: unless-stopped
+    command: start-dev --hostname=http://auth.mto.local:${KEYCLOAK_PORT:-8082} --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?falta en .env, copiese .env.example}
+      KC_HTTP_ENABLED: "true"
+      # Habilita /health/ready en el puerto de management (9000), que es lo unico que dice de
+      # verdad si Keycloak ya sirve el realm.
+      KC_HEALTH_ENABLED: "true"
+    # Se monta la variante local y no mto-realm.json: la local trae el secreto fijo de la cuenta
+    # de servicio y sslRequired en none. mto-realm.json es la definicion de referencia para
+    # entornos desplegados y no debe traer ni una cosa ni la otra.
+    volumes:
+      - ./keycloak/mto-realm-local.json:/opt/keycloak/data/import/mto-realm-local.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8082}:8080"
+      - "${KEYCLOAK_MANAGEMENT_PORT:-9000}:9000"
+    # Un socket abierto en el 8080 no significa que el realm este disponible: Keycloak acepta
+    # conexiones bastante antes de servir el JWK Set, y las aplicaciones arrancarian contra un
+    # Keycloak que todavia no responde. Se sondea /health/ready en el puerto de management.
+    #
+    # Escalar de bloque, no cadena entre comillas: el comando lleva comillas dobles y simples, y
+    # entrecomillarlo en linea obliga a escaparlas hasta hacerlo ilegible. Los \r\n llegan
+    # literales a printf, que es quien los convierte en el CRLF que exige HTTP.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/localhost/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      # Keycloak tarda en la primera arrancada (migracion de esquema); sin esto los primeros
+      # sondeos cuentan como fallo.
+      start_period: 30s
+
+  # Colector de trazas y visor, todo en uno. Jaeger habla OTLP nativo, asi que no hace falta un
+  # OpenTelemetry Collector delante. Uno solo para los tres servicios: una traza que empieza en el
+  # gateway y termina en mto-stock, saltando por la cola de RabbitMQ, se ve entera en un solo sitio.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: mto-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+    # Sin volumen a proposito: las trazas de desarrollo viven en memoria y se pierden al parar el
+    # contenedor. Persistirlas pediria Elasticsearch o Cassandra detras, mucho aparato para mirar
+    # una traza mientras se depura.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------------------------
+  # Aplicaciones. Cada una con su perfil, ninguna arranca sin pedirla.
+  # ---------------------------------------------------------------------------------------------
+
+  configuration:
+    image: ghcr.io/alexwarrior1991/mto-configuration:${MTO_CONFIGURATION_TAG:-latest}
+    container_name: mto-configuration
+    profiles: [all, configuration]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MTO_CONFIGURATION_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${MTO_CONFIGURATION_DB:-mto_configuration_db}
+      MTO_CONFIGURATION_DATASOURCE_USERNAME: ${MTO_CONFIGURATION_USER:-mto_configuration_user}
+      MTO_CONFIGURATION_DATASOURCE_PASSWORD: ${MTO_CONFIGURATION_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_CONFIGURATION_DB_SCHEMA: ${MTO_CONFIGURATION_SCHEMA:-mto_configuration}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-configuration-api
+      KEYCLOAK_AUDIENCE: mto-configuration-api
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
+    extra_hosts:
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_CONFIGURATION_PORT:-8081}:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+
+  stock:
+    image: ghcr.io/alexwarrior1991/mto-stock:${MTO_STOCK_TAG:-latest}
+    container_name: mto-stock
+    profiles: [all, stock]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_STOCK_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_STOCK_DB:-mto_stock}
+      DATABASE_USERNAME: ${MTO_STOCK_USER:-mto_stock_user}
+      DATABASE_PASSWORD: ${MTO_STOCK_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_DATA_REDIS_DATABASE: 0
+      APP_CACHE_ENABLED: "true"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+      APP_RABBITMQ_ENABLED: "true"
+      APP_RABBITMQ_MASTER_DATA_LISTENER_ENABLED: "true"
+      # Continua la traza que llega en las cabeceras del mensaje de RabbitMQ.
+      SPRING_RABBITMQ_LISTENER_OBSERVATION_ENABLED: "true"
+      # El mismo valor que en mto-configuration. Vacio por defecto: repartir un secreto es una
+      # decision de explotacion, y con OPTIONAL un mensaje sin firma verificable sigue pasando.
+      MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
+      MESSAGING_SIGNATURE_MODE: ${MESSAGING_SIGNATURE_MODE:-OPTIONAL}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-stock-api
+      KEYCLOAK_AUDIENCE: mto-stock-api
+      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
+      MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+      MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
+    extra_hosts:
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_STOCK_PORT:-8080}:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+
+  # El borde: aqui nace la traza distribuida y aqui se autentica. No persiste nada, asi que no
+  # depende de la infraestructura de datos.
+  #
+  # Los destinos van por nombre de servicio de compose porque los tres corren en la misma red. Si
+  # se para una aplicacion para arrancarla desde el IDE, hay que apuntar su URL al host: vease
+  # MTO_CONFIGURATION_URL / MTO_STOCK_URL en .env.example.
+  gateway:
+    image: ghcr.io/alexwarrior1991/mto-gateway:${MTO_GATEWAY_TAG:-latest}
+    container_name: mto-gateway
+    profiles: [all, gateway]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8090
+      MTO_CONFIGURATION_URL: ${MTO_CONFIGURATION_URL:-http://configuration:8080}
+      MTO_STOCK_URL: ${MTO_STOCK_URL:-http://stock:8080}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:5173}
+    # host.docker.internal no existe en Linux salvo que se declare; hace falta si se apunta
+    # MTO_CONFIGURATION_URL o MTO_STOCK_URL a un servicio arrancado desde el IDE.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_GATEWAY_PORT:-8090}:8090"
+    depends_on:
+      keycloak: {condition: service_healthy}
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

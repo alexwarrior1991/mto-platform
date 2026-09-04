@@ -1,0 +1,29 @@
+{
+  "roles": {
+    "realm": [
+      {
+        "name": "mto-ops",
+        "description": "Explotacion y monitorizacion de las dos aplicaciones del dominio",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-configuration-api": [
+              "config-read",
+              "ops-metrics",
+              "ops-write"
+            ],
+            "mto-stock-api": [
+              "stock-read",
+              "ops-metrics",
+              "ops-write"
+            ],
+            "mto-gateway-api": [
+              "ops-metrics",
+              "ops-write"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

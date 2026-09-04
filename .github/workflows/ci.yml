@@ -1,0 +1,94 @@
+# El realm vive repartido en cuatro repositorios, asi que este CI se los trae todos: comprobar solo
+# los ficheros de este no dice nada sobre si el conjunto encaja. Los cuatro son publicos, de modo
+# que el checkout cruzado no necesita ningun token.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  # Un cambio de roles en cualquiera de los tres servicios puede romper el ensamblado sin tocar
+  # este repositorio, y aqui no llega ningun evento de aquellos: de ahi la pasada semanal.
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  realm:
+    name: Realm y composes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out mto-platform
+        uses: actions/checkout@v5
+        with:
+          path: mto-platform
+
+      - name: Check out mto-configuration
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-configuration
+          path: mto-configuration
+
+      - name: Check out mto-stock
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-stock
+          path: mto-stock
+
+      - name: Check out mto-gateway
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-gateway
+          path: mto-gateway
+
+      # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de
+      # ese repositorio. Sin dependencias: aqui no hay Maven.
+      - name: Check realm consistency
+        working-directory: mto-platform
+        run: python3 scripts/check_realm_consistency.py --repos ..
+
+      # Valida sintaxis, interpolacion de variables y perfiles. No levanta nada.
+      - name: Validate compose
+        working-directory: mto-platform
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          docker compose --profile all config -q
+
+      # Que el fichero parsee no dice que los perfiles seleccionen lo que deben: un 'profiles:' mal
+      # puesto en la infraestructura la dejaria fuera de un 'up' sin perfil y el fallo apareceria
+      # como un servicio que no arranca, no como un error de compose.
+      - name: Check compose profiles
+        working-directory: mto-platform
+        run: |
+          set -euo pipefail
+          infra="jaeger keycloak postgres rabbitmq redis"
+          for esperado in $infra; do
+            if ! docker compose config --services | grep -qx "$esperado"; then
+              echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
+            fi
+          done
+          for app in configuration stock gateway; do
+            if docker compose config --services | grep -qx "$app"; then
+              echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
+            fi
+            if ! docker compose --profile "$app" config --services | grep -qx "$app"; then
+              echo "El perfil '$app' no incluye su aplicacion"; exit 1
+            fi
+          done
+          echo "Perfiles correctos"
+
+      - name: Check the assembly script
+        working-directory: mto-platform
+        run: |
+          bash -n keycloak/apply-partials.sh
+          sudo apt-get install -y --no-install-recommends shellcheck >/dev/null 2>&1 || true
+          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh || true

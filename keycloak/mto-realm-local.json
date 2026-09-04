@@ -1,0 +1,62 @@
+{
+  "realm": "mto",
+  "enabled": true,
+  "displayName": "MTO (local)",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "mto-frontend",
+      "name": "Frontal MTO",
+      "description": "Aplicacion de navegador. Authorization Code con PKCE. Es lo unico comun a los tres servicios que puede vivir en el realm base: los audience mapper resuelven su destino al emitir el token, no al importar, asi que pueden nombrar clientes que todavia no existen.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://localhost:4200/*"
+      ],
+      "webOrigins": [
+        "http://localhost:4200"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audiencia-mto-configuration-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-configuration-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audiencia-mto-stock-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-stock-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audiencia-mto-gateway-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-gateway-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

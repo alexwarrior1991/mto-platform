@@ -1,0 +1,117 @@
+# El realm vive repartido en cuatro repositorios, asi que este CI se los trae todos: comprobar solo
+# los ficheros de este no dice nada sobre si el conjunto encaja. Los cuatro son publicos, de modo
+# que el checkout cruzado no necesita ningun token.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  # Un cambio de roles en cualquiera de los tres servicios puede romper el ensamblado sin tocar
+  # este repositorio, y aqui no llega ningun evento de aquellos: de ahi la pasada semanal.
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  realm:
+    name: Realm y composes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out mto-platform
+        uses: actions/checkout@v5
+        with:
+          path: mto-platform
+
+      # El realm se ensambla desde los cuatro repositorios, asi que un cambio coordinado vive en la
+      # misma rama en los cuatro. Se usa esa rama en cada hermano si existe y la de por defecto si
+      # no: sin esto, un PR que anade una importacion parcial se comprueba contra un master que
+      # todavia no la tiene, y falla siempre.
+      - name: Resolve sibling branches
+        id: refs
+        run: |
+          set -euo pipefail
+          branch="${{ github.head_ref || github.ref_name }}"
+          for repo in configuration stock gateway; do
+            if git ls-remote --exit-code --heads \
+                 "https://github.com/alexwarrior1991/mto-$repo" "$branch" >/dev/null 2>&1; then
+              echo "${repo}_ref=$branch" >> "$GITHUB_OUTPUT"
+              echo "mto-$repo: $branch"
+            else
+              echo "${repo}_ref=master" >> "$GITHUB_OUTPUT"
+              echo "mto-$repo: master (no tiene la rama $branch)"
+            fi
+          done
+
+      - name: Check out mto-configuration
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-configuration
+          ref: ${{ steps.refs.outputs.configuration_ref }}
+          path: mto-configuration
+
+      - name: Check out mto-stock
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-stock
+          ref: ${{ steps.refs.outputs.stock_ref }}
+          path: mto-stock
+
+      - name: Check out mto-gateway
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-gateway
+          ref: ${{ steps.refs.outputs.gateway_ref }}
+          path: mto-gateway
+
+      # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de
+      # ese repositorio. Sin dependencias: aqui no hay Maven.
+      - name: Check realm consistency
+        working-directory: mto-platform
+        run: python3 scripts/check_realm_consistency.py --repos ..
+
+      # Valida sintaxis, interpolacion de variables y perfiles. No levanta nada.
+      - name: Validate compose
+        working-directory: mto-platform
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          docker compose --profile all config -q
+
+      # Que el fichero parsee no dice que los perfiles seleccionen lo que deben: un 'profiles:' mal
+      # puesto en la infraestructura la dejaria fuera de un 'up' sin perfil y el fallo apareceria
+      # como un servicio que no arranca, no como un error de compose.
+      - name: Check compose profiles
+        working-directory: mto-platform
+        run: |
+          set -euo pipefail
+          infra="jaeger keycloak postgres rabbitmq redis"
+          for esperado in $infra; do
+            if ! docker compose config --services | grep -qx "$esperado"; then
+              echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
+            fi
+          done
+          for app in configuration stock gateway; do
+            if docker compose config --services | grep -qx "$app"; then
+              echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
+            fi
+            if ! docker compose --profile "$app" config --services | grep -qx "$app"; then
+              echo "El perfil '$app' no incluye su aplicacion"; exit 1
+            fi
+          done
+          echo "Perfiles correctos"
+
+      - name: Check the assembly script
+        working-directory: mto-platform
+        run: |
+          bash -n keycloak/apply-partials.sh
+          sudo apt-get install -y --no-install-recommends shellcheck >/dev/null 2>&1 || true
+          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh || true

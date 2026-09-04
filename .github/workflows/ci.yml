@@ -31,22 +31,45 @@ jobs:
         with:
           path: mto-platform
 
+      # El realm se ensambla desde los cuatro repositorios, asi que un cambio coordinado vive en la
+      # misma rama en los cuatro. Se usa esa rama en cada hermano si existe y la de por defecto si
+      # no: sin esto, un PR que anade una importacion parcial se comprueba contra un master que
+      # todavia no la tiene, y falla siempre.
+      - name: Resolve sibling branches
+        id: refs
+        run: |
+          set -euo pipefail
+          branch="${{ github.head_ref || github.ref_name }}"
+          for repo in configuration stock gateway; do
+            if git ls-remote --exit-code --heads \
+                 "https://github.com/alexwarrior1991/mto-$repo" "$branch" >/dev/null 2>&1; then
+              echo "${repo}_ref=$branch" >> "$GITHUB_OUTPUT"
+              echo "mto-$repo: $branch"
+            else
+              echo "${repo}_ref=master" >> "$GITHUB_OUTPUT"
+              echo "mto-$repo: master (no tiene la rama $branch)"
+            fi
+          done
+
       - name: Check out mto-configuration
         uses: actions/checkout@v5
         with:
           repository: alexwarrior1991/mto-configuration
+          ref: ${{ steps.refs.outputs.configuration_ref }}
           path: mto-configuration
 
       - name: Check out mto-stock
         uses: actions/checkout@v5
         with:
           repository: alexwarrior1991/mto-stock
+          ref: ${{ steps.refs.outputs.stock_ref }}
           path: mto-stock
 
       - name: Check out mto-gateway
         uses: actions/checkout@v5
         with:
           repository: alexwarrior1991/mto-gateway
+          ref: ${{ steps.refs.outputs.gateway_ref }}
           path: mto-gateway
 
       # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de

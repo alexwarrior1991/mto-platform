@@ -143,7 +143,7 @@ pueda aplicar en un entorno desplegado sin arrastrarlos:
 
 ### Usuarios de desarrollo
 
-Los crea el paso 6. Contraseña igual al nombre de usuario.
+Los crea el paso 6. La contraseña de todos es `local`.
 
 | usuario | perfil |
 |---|---|

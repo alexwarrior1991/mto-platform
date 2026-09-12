@@ -10,7 +10,7 @@
     {
       "clientId": "mto-frontend",
       "name": "Frontal MTO",
-      "description": "Aplicacion de navegador. Authorization Code con PKCE. Es lo unico comun a los tres servicios que puede vivir en el realm base: los audience mapper resuelven su destino al emitir el token, no al importar, asi que pueden nombrar clientes que todavia no existen.",
+      "description": "Aplicacion de navegador. Authorization Code con PKCE. Vive en el realm base porque sus audience mapper resuelven el destino al emitir el token, no al importar: pueden nombrar clientes que todavia no existen.",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,

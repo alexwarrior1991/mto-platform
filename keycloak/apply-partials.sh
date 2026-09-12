@@ -69,6 +69,25 @@ for herramienta in curl python3; do
   command -v "$herramienta" >/dev/null || { echo "Hace falta $herramienta" >&2; exit 1; }
 done
 
+# En MSYS2, Cygwin o Git Bash, 'python3' suele ser el Python NATIVO de Windows, y ese no entiende
+# las rutas del shell: un '/drives/c/...' o un '/c/...' no significan nada para el. Bash resuelve
+# el [[ -f ]] de arriba y Python despues no encuentra el fichero, de modo que la comprobacion
+# previa da via libre y la ejecucion revienta a mitad de camino, que es justo lo que esa
+# comprobacion existe para evitar.
+#
+#   FileNotFoundError: [Errno 2] No such file or directory:
+#   '/drives/c/Users/.../mto-configuration/keycloak/mto-configuration-partial-import.json'
+#
+# cygpath es la traduccion oficial y solo existe en esos entornos; fuera de ellos la ruta ya
+# sirve tal cual y la funcion no hace nada.
+ruta_nativa() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 echo "Pidiendo token de administrador a $KC_URL"
 TOKEN="$(curl -sS --fail-with-body -X POST \
   "$KC_URL/realms/master/protocol/openid-connect/token" \
@@ -89,7 +108,7 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 d["ifResourceExists"] = "OVERWRITE"
 json.dump(d, sys.stdout)
-' "$fichero")"
+' "$(ruta_nativa "$fichero")")"
 
   respuesta="$(curl -sS --fail-with-body -X POST \
     "$KC_URL/admin/realms/$KC_REALM/partialImport" \

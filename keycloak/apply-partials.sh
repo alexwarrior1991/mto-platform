@@ -89,11 +89,26 @@ ruta_nativa() {
 }
 
 echo "Pidiendo token de administrador a $KC_URL"
+# end="" y no un print a secas: en Windows, print() traduce el \n a \r\n, y la sustitucion de
+# ordenes de bash quita el salto de linea final PERO NO EL RETORNO DE CARRO. El token queda con un
+# \r pegado, la cabecera sale como 'Authorization: Bearer eyJ...\r' y el analizador HTTP la
+# rechaza por malformada: 400 con el cuerpo vacio y NADA en el log de Keycloak, porque la peticion
+# no llega a su codigo. El sintoma no se parece en nada a su causa.
 TOKEN="$(curl -sS --fail-with-body -X POST \
   "$KC_URL/realms/master/protocol/openid-connect/token" \
   -d grant_type=password -d client_id=admin-cli \
   -d "username=$KC_ADMIN_USER" -d "password=$KC_ADMIN_PASSWORD" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"], end="")')"
+
+# Ultima linea de defensa: cualquier \r que llegue hasta aqui, venga de donde venga, rompe la
+# cabecera igual. Es la segunda vez que este guion se cae por no traducir entre el mundo de bash y
+# el de Windows, asi que se limpia y ya.
+TOKEN="${TOKEN//$'\r'/}"
+
+if [[ -z "$TOKEN" ]]; then
+  echo "No se ha podido obtener el token de administrador de $KC_URL" >&2
+  exit 1
+fi
 
 for fichero in "${FICHEROS[@]}"; do
   nombre="$(basename "$fichero")"

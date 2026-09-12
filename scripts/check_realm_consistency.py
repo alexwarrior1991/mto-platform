@@ -279,6 +279,43 @@ def el_perfil_de_explotacion_cubre_los_tres(orden, cruzado, problemas):
         )
 
 
+# Limites de las columnas del esquema de Keycloak sobre las que escribe una importacion. No son
+# una convencion nuestra: son el ancho de la columna, y pasarse aborta el arranque entero.
+COLUMNAS_KEYCLOAK = {
+    "description": 255,
+    "name": 255,
+}
+
+
+def nada_se_pasa_del_ancho_de_su_columna(orden, problemas):
+    """Keycloak no trunca: si un texto no cabe en su columna, la importacion revienta.
+
+    Y no revienta suave. El servidor sale con codigo 1 durante el arranque, el 'restart' del
+    compose lo relanza y queda en bucle, de modo que lo que se ve es que nadie escucha en el
+    8082 —no que un JSON tenga una descripcion cuatro caracteres mas larga de la cuenta—.
+
+    Paso de verdad: la descripcion de 'mto-frontend' llego a 259 caracteres contra una columna
+    varchar(255), y con ella el entorno local entero dejo de poder levantarse.
+    """
+    def recorre(nodo, ruta, fichero):
+        if isinstance(nodo, dict):
+            for clave, valor in nodo.items():
+                limite = COLUMNAS_KEYCLOAK.get(clave)
+                if limite and isinstance(valor, str) and len(valor) > limite:
+                    problemas.error(
+                        "Un texto no cabe en su columna de Keycloak",
+                        f"{fichero} -> {ruta}.{clave} tiene {len(valor)} caracteres y la columna "
+                        f"admite {limite}.\n  {valor[:80]}...",
+                    )
+                recorre(valor, f"{ruta}.{clave}", fichero)
+        elif isinstance(nodo, list):
+            for i, valor in enumerate(nodo):
+                recorre(valor, f"{ruta}[{i}]", fichero)
+
+    for fichero, doc in orden:
+        recorre(doc, "", fichero)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -308,6 +345,7 @@ def main():
     ]
 
     problemas = Problemas()
+    nada_se_pasa_del_ancho_de_su_columna(orden, problemas)
     ningun_compuesto_nombra_un_cliente_que_aun_no_existe(orden, problemas)
     base_y_local_no_se_separan(base, local, problemas)
     el_base_no_trae_usuarios_ni_secretos(base, problemas)

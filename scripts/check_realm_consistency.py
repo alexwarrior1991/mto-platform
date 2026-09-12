@@ -34,6 +34,19 @@ DELTAS_LOCALES_PERMITIDOS = {
     "displayName": ("MTO", "MTO (local)"),
 }
 
+# Lo mismo, pero DENTRO de un cliente: {(clientId, campo): (valor en el base, valor en el local)}.
+DELTAS_DE_CLIENTE_PERMITIDOS = {
+    # El realm esta pensado para Authorization Code con PKCE y un frontal en localhost:4200. En
+    # local ese frontal no siempre existe, y probar la API a mano o cargar un maestro con curl
+    # necesita pedir un token con usuario y contrasena. Sin esto, Keycloak responde
+    # 'unauthorized_client' y no hay forma de conseguir un token sin levantar el navegador.
+    #
+    # Se abre SOLO aqui, y a proposito: el password grant manda la contrasena del usuario al
+    # cliente, que es justo lo que Authorization Code existe para evitar. En un entorno desplegado
+    # se queda cerrado.
+    ("mto-frontend", "directAccessGrantsEnabled"): (False, True),
+}
+
 
 class Problemas:
     """Acumula los fallos para poder informarlos todos de una vez."""
@@ -147,12 +160,38 @@ def base_y_local_no_se_separan(base, local, problemas):
 
     Quien anada algo tocando solo uno deja el stack local probando una autorizacion distinta de la
     que se despliega, y eso no da error en ninguna parte.
+
+    Se comparan los clientes CAMPO A CAMPO y no solo por su nombre. La version anterior miraba
+    'clientes_de(base).keys() != clientes_de(local).keys()', de modo que abrir un flujo en un
+    fichero y no en el otro -exactamente lo que hace el delta de mto-frontend que hay declarado-
+    pasaba sin decir nada. El nombre del cliente es lo que menos se equivoca; lo que se desajusta
+    son sus flags.
     """
     if clientes_de(base).keys() != clientes_de(local).keys():
         problemas.error(
             "el realm base y el local no declaran los mismos clientes",
             f"  base:  {sorted(clientes_de(base))}\n  local: {sorted(clientes_de(local))}",
         )
+
+    for client_id, cliente_base in clientes_de(base).items():
+        cliente_local = clientes_de(local).get(client_id)
+        if cliente_local is None:
+            continue  # ya lo dice la comprobacion de arriba
+        for campo in set(cliente_base) | set(cliente_local):
+            if cliente_base.get(campo) == cliente_local.get(campo):
+                continue
+            permitido = DELTAS_DE_CLIENTE_PERMITIDOS.get((client_id, campo))
+            if permitido and (cliente_base.get(campo), cliente_local.get(campo)) == permitido:
+                continue
+            problemas.error(
+                "un cliente del realm local se aparta del base en algo que no esta justificado",
+                f"  '{client_id}.{campo}': base={cliente_base.get(campo)!r}, "
+                f"local={cliente_local.get(campo)!r}\n"
+                f"  Comparar los clientes solo por su nombre dejaba pasar justo esto: un flujo\n"
+                f"  abierto en local y cerrado en lo que se despliega, o al reves, y el stack\n"
+                f"  local probando una autorizacion distinta de la real.\n"
+                f"  Si la diferencia es deliberada, anadase a DELTAS_DE_CLIENTE_PERMITIDOS con el motivo.",
+            )
 
     if roles_de_cliente(base) != roles_de_cliente(local):
         problemas.error(
@@ -197,6 +236,28 @@ def el_base_no_trae_usuarios_ni_secretos(base, problemas):
                 f"  El cliente '{cliente['clientId']}' de mto-realm.json trae un secreto. Los de un\n"
                 f"  entorno desplegado los genera Keycloak al importar y se leen de su consola;\n"
                 f"  versionar uno lo publica en el repositorio.",
+            )
+
+
+def el_base_no_abre_el_password_grant(base, problemas):
+    """En lo que se despliega, ningun cliente pide la contrasena del usuario.
+
+    El realm local SI lo abre para mto-frontend, y esta declarado en DELTAS_DE_CLIENTE_PERMITIDOS.
+    Pero ese delta se cumple comparando los dos ficheros, y dos ficheros coinciden igual de bien
+    con el flujo abierto en LOS DOS: la comparacion de arriba se quedaria muda justo en el caso
+    peor. De ahi esta comprobacion aparte, que mira el base y no lo compara con nada.
+
+    Con el password grant, la contrasena del usuario viaja hasta el cliente, que es exactamente lo
+    que Authorization Code con PKCE existe para evitar.
+    """
+    for cliente in base.get("clients", []):
+        if cliente.get("directAccessGrantsEnabled"):
+            problemas.error(
+                "el realm base abre el password grant",
+                f"  El cliente '{cliente['clientId']}' de mto-realm.json trae\n"
+                f"  directAccessGrantsEnabled: true. Ese flujo manda la contrasena del usuario al\n"
+                f"  cliente y solo esta justificado en local, donde no hay frontal para el flujo\n"
+                f"  de codigo. mto-realm.json es lo que se lleva a un entorno desplegado.",
             )
 
 
@@ -349,6 +410,7 @@ def main():
     ningun_compuesto_nombra_un_cliente_que_aun_no_existe(orden, problemas)
     base_y_local_no_se_separan(base, local, problemas)
     el_base_no_trae_usuarios_ni_secretos(base, problemas)
+    el_base_no_abre_el_password_grant(base, problemas)
     el_frontal_emite_audiencia_para_los_tres(base, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(orden[:-3], cruzado, problemas)

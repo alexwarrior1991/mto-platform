@@ -15,7 +15,7 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "attributes": {
         "pkce.code.challenge.method": "S256"
       },

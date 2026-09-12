@@ -168,7 +168,12 @@ services:
   # OpenTelemetry Collector delante. Uno solo para los tres servicios: una traza que empieza en el
   # gateway y termina en mto-stock, saltando por la cola de RabbitMQ, se ve entera en un solo sitio.
   jaeger:
-    image: jaegertracing/all-in-one:1.62
+    # El tag lleva los TRES numeros. 'jaegertracing/all-in-one:1.62' no existe y nunca ha
+    # existido —los tags publicados son 1.62.0, 1.63.0...—, asi que este compose no podia
+    # levantarse entero: 'docker compose up' fallaba al resolver la referencia y de paso
+    # interrumpia la descarga de las tres imagenes de aplicacion, que quedaban a medias y
+    # daban un 'No such image' que parecia otro problema distinto.
+    image: jaegertracing/all-in-one:1.62.0
     container_name: mto-jaeger
     restart: unless-stopped
     environment:

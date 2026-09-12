@@ -150,6 +150,33 @@ Los crea el paso 6. La contraseña de todos es `local`.
 | `config.lector` / `.editor` / `.responsable` / `.auditor` / `.ops` | `mto-viewer` / `mto-editor` / `mto-admin` / `mto-auditor` / `mto-ops` |
 | `almacen.lector` / `.operario` / `.responsable` | `mto-warehouse-viewer` / `mto-warehouse-operator` / `mto-warehouse-admin` |
 
+### Pedir un token a mano
+
+El realm esta pensado para Authorization Code con PKCE y un frontal en `localhost:4200`. En local
+ese frontal no siempre esta levantado, y probar la API con `curl` o cargar un maestro necesita un
+token. Por eso `mto-realm-local.json` —y **solo** ese— abre el *password grant* en `mto-frontend`:
+
+```bash
+curl -sS -X POST http://auth.mto.local:8082/realms/mto/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=mto-frontend \
+  -d username=config.responsable -d password=local -o /tmp/tok.json
+TOKEN=$(grep -o '"access_token":"[^"]*"' /tmp/tok.json | cut -d'"' -f4)
+```
+
+El token dura 5 minutos (`accessTokenLifespan`), así que un **401 con el cuerpo vacío** a mitad de
+una carga larga casi siempre es eso y no un problema de permisos.
+
+Dos cosas que conviene tener presentes:
+
+- **En lo que se despliega se queda cerrado.** El *password grant* manda la contraseña del usuario
+  al cliente, que es justo lo que Authorization Code existe para evitar. `mto-realm.json` lo tiene
+  a `false` y `check_realm_consistency.py` falla si alguien lo abre ahí.
+- **Extrae el token sin que se cuele un byte de control.** El `grep -o` corta en la comilla de
+  cierre; un `print()` de Python en Windows añade un `\r` que sobrevive a `$(...)`, viaja dentro de
+  la cabecera `Authorization` y se traduce en un **400 con el cuerpo vacío y nada en el log de
+  Keycloak**, porque la petición no llega a su código. Es el mismo fallo que documenta
+  `apply-partials.sh`, y el síntoma no se parece en nada a su causa.
+
 ## Comprobar que el realm sigue encajando
 
 ```bash
@@ -160,8 +187,14 @@ Sustituye a `RealmDefinitionsTest`, que vivia en `mto-configuration` y solo veia
 ese repositorio. Sin dependencias: este repositorio no lleva Maven. Comprueba, recorriendo los
 ficheros **en el orden en que se aplican**, que ningun compuesto nombre un cliente o un rol que
 todavia no existe, que el realm base y el local no se separen, que el base no gane usuarios ni
-secretos, que `mto-frontend` emita audiencia para los tres API, que ningun cliente se declare dos
-veces con contenido distinto y que `mto-ops` cubra el Actuator de los tres servicios.
+secretos **ni abra el password grant**, que `mto-frontend` emita audiencia para los tres API, que
+ningun cliente se declare dos veces con contenido distinto, que ningun texto se pase del ancho de
+su columna en Keycloak y que `mto-ops` cubra el Actuator de los tres servicios.
+
+Los clientes del realm base y el local se comparan **campo a campo**, no solo por su nombre: una
+diferencia de flags entre los dos es precisamente lo que deja el stack local probando una
+autorizacion distinta de la real. Las diferencias deliberadas se declaran en
+`DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
 Lo ejecuta el CI de este repositorio, que hace checkout de los cuatro.
 

@@ -1,2 +1,13 @@
+# Finales de linea. Un fichero que un interprete lee linea a linea no puede depender de la
+# configuracion de quien lo clona: con el core.autocrlf=true que trae Git para Windows por
+# defecto, un .sh sale del checkout con CRLF y bash se come el \r como parte del comando:
+#
+#   ./keycloak/apply-partials.sh: line 19: $'\r': command not found
+#   : invalid option nameials.sh: line 20: set: pipefail
+#
+# El segundo mensaje es el propio retorno de carro devolviendo el cursor al principio de la
+# linea y pisando lo ya escrito. Por eso el .sh se fija a LF igual que /mvnw, y el .cmd a
+# CRLF: cmd.exe si necesita los dos caracteres.
 /mvnw text eol=lf
+*.sh text eol=lf
 *.cmd text eol=crlf

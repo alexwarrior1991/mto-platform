@@ -1,4 +1,4 @@
--- Las dos bases del dominio en un unico servidor.
+-- Las tres bases del dominio en un unico servidor.
 --
 -- El contenedor de PostgreSQL ejecuta los ficheros de /docker-entrypoint-initdb.d SOLO en la
 -- primera inicializacion, cuando el directorio de datos esta vacio. Si se cambia algo de aqui
@@ -20,6 +20,9 @@
 \getenv stock_db            MTO_STOCK_DB
 \getenv stock_user          MTO_STOCK_USER
 \getenv stock_pass          MTO_STOCK_PASSWORD
+\getenv maintenance_db      MTO_MAINTENANCE_DB
+\getenv maintenance_user    MTO_MAINTENANCE_USER
+\getenv maintenance_pass    MTO_MAINTENANCE_PASSWORD
 
 -- mto-configuration ------------------------------------------------------------------------------
 
@@ -41,11 +44,22 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'stock_db', :'stock_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'stock_db')
 \gexec
 
+-- mto-maintenance --------------------------------------------------------------------------------
+
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'maintenance_user', :'maintenance_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'maintenance_user')
+\gexec
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'maintenance_db', :'maintenance_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'maintenance_db')
+\gexec
+
 -- El esquema de mto-configuration ------------------------------------------------------------
 --
 -- Flyway esta configurado con default-schema y schemas y sabe crearlo, pero necesita privilegios
 -- sobre la base entera para ello. Se crea aqui con el dueño correcto para no tener que darselos.
--- mto-stock usa el esquema public de su propia base y no necesita nada equivalente.
+-- mto-stock y mto-maintenance usan el esquema public de su propia base y no necesitan nada
+-- equivalente.
 
 \connect :configuration_db
 

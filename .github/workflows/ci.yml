@@ -1,5 +1,5 @@
-# El realm vive repartido en cuatro repositorios, asi que este CI se los trae todos: comprobar solo
-# los ficheros de este no dice nada sobre si el conjunto encaja. Los cuatro son publicos, de modo
+# El realm vive repartido en cinco repositorios, asi que este CI se los trae todos: comprobar solo
+# los ficheros de este no dice nada sobre si el conjunto encaja. Los cinco son publicos, de modo
 # que el checkout cruzado no necesita ningun token.
 name: CI
 
@@ -8,7 +8,7 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
-  # Un cambio de roles en cualquiera de los tres servicios puede romper el ensamblado sin tocar
+  # Un cambio de roles en cualquiera de los cuatro servicios puede romper el ensamblado sin tocar
   # este repositorio, y aqui no llega ningun evento de aquellos: de ahi la pasada semanal.
   schedule:
     - cron: '0 6 * * 1'
@@ -31,7 +31,7 @@ jobs:
         with:
           path: mto-platform
 
-      # El realm se ensambla desde los cuatro repositorios, asi que un cambio coordinado vive en la
+      # El realm se ensambla desde los cinco repositorios, asi que un cambio coordinado vive en la
       # misma rama en los cuatro. Se usa esa rama en cada hermano si existe y la de por defecto si
       # no: sin esto, un PR que anade una importacion parcial se comprueba contra un master que
       # todavia no la tiene, y falla siempre.
@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="${{ github.head_ref || github.ref_name }}"
-          for repo in configuration stock gateway; do
+          for repo in configuration stock gateway maintenance; do
             if git ls-remote --exit-code --heads \
                  "https://github.com/alexwarrior1991/mto-$repo" "$branch" >/dev/null 2>&1; then
               echo "${repo}_ref=$branch" >> "$GITHUB_OUTPUT"
@@ -72,6 +72,13 @@ jobs:
           ref: ${{ steps.refs.outputs.gateway_ref }}
           path: mto-gateway
 
+      - name: Check out mto-maintenance
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-maintenance
+          ref: ${{ steps.refs.outputs.maintenance_ref }}
+          path: mto-maintenance
+
       # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de
       # ese repositorio. Sin dependencias: aqui no hay Maven.
       - name: Check realm consistency
@@ -99,7 +106,7 @@ jobs:
               echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
             fi
           done
-          for app in configuration stock gateway; do
+          for app in configuration stock gateway maintenance; do
             if docker compose config --services | grep -qx "$app"; then
               echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
             fi

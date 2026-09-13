@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprueba que las piezas del realm 'mto' repartidas por los cuatro repositorios encajan.
+"""Comprueba que las piezas del realm 'mto' repartidas por los cinco repositorios encajan.
 
 Los ficheros de keycloak/ no los compila nadie: un error en ellos no se descubre hasta que alguien
 levanta el stack o, peor, hasta que se importa en un entorno. Y desde que el realm se ensambla a
@@ -12,7 +12,7 @@ repositorio. Solo libreria estandar: este es un repositorio de composes y no se 
 Uso:
     python3 scripts/check_realm_consistency.py [--repos DIR]
 
-DIR es el directorio que contiene los cuatro repositorios como hermanos (por defecto, el padre de
+DIR es el directorio que contiene los cinco repositorios como hermanos (por defecto, el padre de
 este repositorio).
 """
 
@@ -21,8 +21,8 @@ import json
 import sys
 from pathlib import Path
 
-# Los clientes de API del dominio. mto-frontend tiene que poder emitir tokens dirigidos a los tres.
-CLIENTES_API = ("mto-configuration-api", "mto-stock-api", "mto-gateway-api")
+# Los clientes de API del dominio. mto-frontend tiene que poder emitir tokens dirigidos a todos.
+CLIENTES_API = ("mto-configuration-api", "mto-stock-api", "mto-gateway-api", "mto-maintenance-api")
 
 # Lo unico en lo que el realm local puede apartarse del base. Cualquier otra diferencia significa
 # que alguien toco uno y no el otro, y el stack local estaria probando algo distinto de lo que se
@@ -67,7 +67,7 @@ def leer(ruta):
     if not ruta.is_file():
         raise SystemExit(
             f"No se encuentra {ruta}.\n"
-            "Los cuatro repositorios tienen que estar como hermanos en el mismo directorio; "
+            "Los cinco repositorios tienen que estar como hermanos en el mismo directorio; "
             "usese --repos para indicar otro."
         )
     with ruta.open(encoding="utf-8") as f:
@@ -383,7 +383,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los cuatro repositorios como hermanos.",
+        help="Directorio que contiene los cinco repositorios como hermanos.",
     )
     args = parser.parse_args()
 
@@ -400,10 +400,14 @@ def main():
         ("mto-configuration-partial-import.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-partial-import.json")),
         ("mto-stock-partial-import.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json")),
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
+        ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
+        ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
     ]
+    # Las parciales que crean clientes y permisos: todo lo que va ANTES del perfil cruzado.
+    parciales = orden[:[nombre for nombre, _ in orden].index("mto-ops-cross-service.json")]
 
     problemas = Problemas()
     nada_se_pasa_del_ancho_de_su_columna(orden, problemas)
@@ -413,7 +417,7 @@ def main():
     el_base_no_abre_el_password_grant(base, problemas)
     el_frontal_emite_audiencia_para_los_tres(base, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
-    el_perfil_de_explotacion_cubre_los_tres(orden[:-3], cruzado, problemas)
+    el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
 
     codigo = problemas.informe()
     if codigo == 0:

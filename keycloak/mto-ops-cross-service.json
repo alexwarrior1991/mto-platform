@@ -3,7 +3,7 @@
     "realm": [
       {
         "name": "mto-ops",
-        "description": "Explotacion y monitorizacion de las dos aplicaciones del dominio",
+        "description": "Explotacion y monitorizacion de las aplicaciones del dominio",
         "composite": true,
         "composites": {
           "client": {
@@ -18,6 +18,11 @@
               "ops-write"
             ],
             "mto-gateway-api": [
+              "ops-metrics",
+              "ops-write"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read",
               "ops-metrics",
               "ops-write"
             ]

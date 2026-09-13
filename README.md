@@ -19,7 +19,7 @@ Cada repositorio traia su propio stack completo, y eso provocaba tres problemas 
   fallaba**: ni un error, ni un aviso.
 - **Los stacks chocaban de puertos** en 5432, 5672, 15672, 8082, 9000, 16686 y 4318.
 
-Aqui hay un solo Postgres con las dos bases, un solo Redis, **un solo broker**, un solo Keycloak y
+Aqui hay un solo Postgres con las tres bases, un solo Redis, **un solo broker**, un solo Keycloak y
 un solo colector de trazas.
 
 ## Requisitos
@@ -31,7 +31,7 @@ tokens es esa URL y tiene que resolverse igual desde dentro de compose y desde e
 127.0.0.1  auth.mto.local  otel.mto.local
 ```
 
-Los cuatro repositorios tienen que estar como hermanos en el mismo directorio: el script de
+Los cinco repositorios tienen que estar como hermanos en el mismo directorio: el script de
 ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio.
 
 ```
@@ -39,6 +39,7 @@ mto/
 ├── mto-platform/
 ├── mto-configuration/
 ├── mto-stock/
+├── mto-maintenance/
 └── mto-gateway/
 ```
 
@@ -56,8 +57,14 @@ La infraestructura no tiene perfil, asi que arranca siempre. Cada aplicacion lle
 docker compose --profile all up -d                              # todo
 docker compose up -d                                            # solo infraestructura
 docker compose --profile stock up -d                            # infraestructura + mto-stock
-docker compose --profile configuration --profile gateway up -d  # dos de tres
+docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
+docker compose --profile configuration --profile gateway up -d  # dos de cuatro
 ```
+
+`mto-maintenance` llama a `mto-stock` para reservar y consumir material: sin el, arranca igual,
+pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,
+aisladores de seccion) llegan por los eventos de `mto-configuration`, asi que para verlos hace
+falta que ese servicio haya publicado algo.
 
 ### Trabajar sobre un servicio
 
@@ -87,6 +94,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 |---|---|
 | `mto-stock` | 8080 |
 | `mto-configuration` | 8081 |
+| `mto-maintenance` | 8083 |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |
@@ -96,8 +104,8 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 
 Todos son parametrizables desde `.env`.
 
-El gateway enruta `/api/configuration/**` a `/api/v1/configuration/**` y `/api/stock/**` a
-`/api/v1/inventory/**`.
+El gateway enruta `/api/configuration/**` a `/api/v1/configuration/**`, `/api/stock/**` a
+`/api/v1/inventory/**` y `/api/maintenance/**` a `/api/v1/maintenance/**`.
 
 ## Las imagenes
 
@@ -121,13 +129,19 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
-| 5 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los tres** |
-| 6 | `mto-configuration-dev.json` / `mto-stock-dev.json` | cada servicio | usuarios de desarrollo |
+| 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
+| 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los cuatro** |
+| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` | cada servicio | usuarios de desarrollo y secretos locales de las cuentas de servicio |
+| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc` |
 
-El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 2 al 6, `apply-partials.sh`.
+El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 2 al 8, `apply-partials.sh`.
+El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
+y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
+otro; en un entorno desplegado se hace en la consola (Clients → `mto-maintenance-svc` → Service
+accounts roles).
 
 **El orden no es un detalle.** Un compuesto solo puede nombrar roles de clientes que ya existan en
-el realm: `mto-ops-cross-service.json` nombra los tres, asi que va detras de las parciales que los
+el realm: `mto-ops-cross-service.json` nombra los cuatro, asi que va detras de las parciales que los
 crean. Al reves Keycloak responde *App doesn't exist in role definitions* y no aplica nada.
 
 Cada servicio sigue siendo dueño de sus clientes, roles y perfiles, en su propio repositorio: asi
@@ -143,12 +157,13 @@ pueda aplicar en un entorno desplegado sin arrastrarlos:
 
 ### Usuarios de desarrollo
 
-Los crea el paso 6. La contraseña de todos es `local`.
+Los crea el paso 7. La contraseña de todos es `local`.
 
 | usuario | perfil |
 |---|---|
 | `config.lector` / `.editor` / `.responsable` / `.auditor` / `.ops` | `mto-viewer` / `mto-editor` / `mto-admin` / `mto-auditor` / `mto-ops` |
 | `almacen.lector` / `.operario` / `.responsable` | `mto-warehouse-viewer` / `mto-warehouse-operator` / `mto-warehouse-admin` |
+| `mantenimiento.lector` / `.tecnico` / `.responsable` | `mto-maintenance-viewer` / `mto-maintenance-technician` / `mto-maintenance-manager` |
 
 ### Pedir un token a mano
 
@@ -187,16 +202,16 @@ Sustituye a `RealmDefinitionsTest`, que vivia en `mto-configuration` y solo veia
 ese repositorio. Sin dependencias: este repositorio no lleva Maven. Comprueba, recorriendo los
 ficheros **en el orden en que se aplican**, que ningun compuesto nombre un cliente o un rol que
 todavia no existe, que el realm base y el local no se separen, que el base no gane usuarios ni
-secretos **ni abra el password grant**, que `mto-frontend` emita audiencia para los tres API, que
+secretos **ni abra el password grant**, que `mto-frontend` emita audiencia para los cuatro API, que
 ningun cliente se declare dos veces con contenido distinto, que ningun texto se pase del ancho de
-su columna en Keycloak y que `mto-ops` cubra el Actuator de los tres servicios.
+su columna en Keycloak y que `mto-ops` cubra el Actuator de los cuatro servicios.
 
 Los clientes del realm base y el local se comparan **campo a campo**, no solo por su nombre: una
 diferencia de flags entre los dos es precisamente lo que deja el stack local probando una
 autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 `DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
-Lo ejecuta el CI de este repositorio, que hace checkout de los cuatro.
+Lo ejecuta el CI de este repositorio, que hace checkout de los cinco.
 
 ## Parar
 

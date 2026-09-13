@@ -47,6 +47,16 @@
           }
         },
         {
+          "name": "audiencia-mto-maintenance-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-maintenance-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
           "name": "audiencia-mto-gateway-api",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",

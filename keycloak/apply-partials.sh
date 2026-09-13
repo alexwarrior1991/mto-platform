@@ -8,14 +8,14 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los tres, asi que va DESPUES de las parciales que los crean.
+# mto-ops-cross-service.json nombra los cuatro, asi que va DESPUES de las parciales que los crean.
 # Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
 #
 # Uso:
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los cuatro repositorios como hermanos en el mismo directorio.
+# Espera los cinco repositorios como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -40,6 +40,7 @@ FICHEROS=(
   "$HERMANOS/mto-configuration/keycloak/mto-configuration-partial-import.json"
   "$HERMANOS/mto-stock/keycloak/mto-stock-partial-import.json"
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
+  "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
 
@@ -47,6 +48,7 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
   FICHEROS+=(
     "$HERMANOS/mto-configuration/keycloak/mto-configuration-dev.json"
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
+    "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
   )
 fi
 
@@ -61,7 +63,7 @@ for fichero in "${FICHEROS[@]}"; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los cuatro repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los cinco repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 
@@ -137,6 +139,51 @@ r = json.loads(sys.argv[1] or "{}")
 print("   ", r.get("overwritten", 0), "sobrescritos,", r.get("added", 0), "anadidos,", r.get("skipped", 0), "omitidos")
 ' "$respuesta"
 done
+
+# Lo que una importacion parcial no puede traer: los roles de la cuenta de servicio de un cliente.
+# mto-maintenance-svc llama a mto-stock y necesita stock-read y stock-write de mto-stock-api, pero
+# un partialImport no asigna roles a usuarios de servicio y la parcial de mantenimiento tampoco
+# deberia decidir por si sola que puede tocar en el almacen de otro. Se hace aqui, en el entorno
+# local, por la API de administracion; en un entorno desplegado es una decision que se toma en la
+# consola (Clients -> mto-maintenance-svc -> Service accounts roles). Reejecutable: asignar un rol
+# que ya esta asignado no cambia nada.
+conceder_roles_de_servicio() {
+  local cliente_svc="$1" cliente_api="$2"; shift 2
+  local roles=("$@")
+  echo "Concediendo a la cuenta de servicio de $cliente_svc los roles ${roles[*]} de $cliente_api"
+
+  local id_svc id_api usuario_svc
+  id_svc="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients?clientId=$cliente_svc" \
+    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")')"
+  id_api="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients?clientId=$cliente_api" \
+    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")')"
+  if [[ -z "$id_svc" || -z "$id_api" ]]; then
+    echo "   no se encuentra $cliente_svc o $cliente_api en el realm; se omite" >&2
+    return 0
+  fi
+  usuario_svc="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_svc/service-account-user" \
+    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"], end="")')"
+
+  local cuerpo
+  cuerpo="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_api/roles" \
+    -H "Authorization: Bearer $TOKEN" | python3 -c '
+import json, sys
+pedidos = set(sys.argv[1:])
+roles = [{"id": r["id"], "name": r["name"]} for r in json.load(sys.stdin) if r["name"] in pedidos]
+faltan = pedidos - {r["name"] for r in roles}
+if faltan:
+    sys.exit("roles inexistentes en el cliente: " + ", ".join(sorted(faltan)))
+json.dump(roles, sys.stdout)
+' "${roles[@]}")"
+
+  curl -sS --fail-with-body -X POST \
+    "$KC_URL/admin/realms/$KC_REALM/users/$usuario_svc/role-mappings/clients/$id_api" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    --data-binary "$cuerpo"
+  echo "    hecho"
+}
+
+conceder_roles_de_servicio mto-maintenance-svc mto-stock-api stock-read stock-write
 
 echo
 echo "Realm '$KC_REALM' ensamblado."

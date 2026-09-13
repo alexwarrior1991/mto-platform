@@ -1,4 +1,4 @@
-# Infraestructura compartida del dominio MTO y las tres aplicaciones que la usan.
+# Infraestructura compartida del dominio MTO y las cuatro aplicaciones que la usan.
 #
 # La infraestructura no lleva 'profiles:', asi que arranca siempre. Cada aplicacion lleva
 # 'profiles: [all, <nombre>]', de modo que:
@@ -6,6 +6,7 @@
 #   docker compose --profile all up -d                              # todo
 #   docker compose up -d                                            # solo infraestructura
 #   docker compose --profile stock up -d                            # infraestructura + mto-stock
+#   docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 #   docker compose --profile configuration --profile gateway up -d  # dos de tres
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
@@ -24,7 +25,7 @@ services:
   # Infraestructura. Sin 'profiles': arranca siempre.
   # ---------------------------------------------------------------------------------------------
 
-  # Un unico servidor para las dos bases de datos. Los usuarios y las bases los crea
+  # Un unico servidor para las tres bases de datos. Los usuarios y las bases los crea
   # postgres/init/01-databases.sql, que el contenedor ejecuta en la PRIMERA inicializacion.
   postgres:
     image: postgres:17-alpine
@@ -43,6 +44,9 @@ services:
       MTO_STOCK_DB: ${MTO_STOCK_DB:-mto_stock}
       MTO_STOCK_USER: ${MTO_STOCK_USER:-mto_stock_user}
       MTO_STOCK_PASSWORD: ${MTO_STOCK_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_MAINTENANCE_DB: ${MTO_MAINTENANCE_DB:-mto_maintenance}
+      MTO_MAINTENANCE_USER: ${MTO_MAINTENANCE_USER:-mto_maintenance_user}
+      MTO_MAINTENANCE_PASSWORD: ${MTO_MAINTENANCE_PASSWORD:?falta en .env, copiese .env.example}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -90,7 +94,7 @@ services:
       start_period: 10s
 
   # EL broker, en singular. mto-configuration publica los eventos de datos maestros aqui y
-  # mto-stock los consume de aqui. Las dos aplicaciones usan el mismo usuario: repartir
+  # mto-stock y mto-maintenance los consumen de aqui. Las dos aplicaciones usan el mismo usuario: repartir
   # credenciales por servicio es una decision de explotacion, no del entorno local.
   rabbitmq:
     image: rabbitmq:4-management-alpine
@@ -282,10 +286,64 @@ services:
       rabbitmq: {condition: service_healthy}
       keycloak: {condition: service_healthy}
 
+  # Mantenimiento de catenaria. Sin Redis: no cachea nada. Consume los eventos de datos maestros
+  # (perfiles, seccionadores y aisladores de seccion se convierten en activos) y LLAMA a mto-stock
+  # para reservar y consumir material, con la cuenta de servicio mto-maintenance-svc. Por eso su
+  # perfil habitual va con el de stock: sin mto-stock arranca igual, pero cada reserva queda en
+  # FAILED hasta que se reintente con .../materials/{id}/sync.
+  maintenance:
+    image: ghcr.io/alexwarrior1991/mto-maintenance:${MTO_MAINTENANCE_TAG:-latest}
+    container_name: mto-maintenance
+    profiles: [all, maintenance]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_MAINTENANCE_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_MAINTENANCE_DB:-mto_maintenance}
+      DATABASE_USERNAME: ${MTO_MAINTENANCE_USER:-mto_maintenance_user}
+      DATABASE_PASSWORD: ${MTO_MAINTENANCE_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+      APP_RABBITMQ_ENABLED: "true"
+      APP_RABBITMQ_MASTER_DATA_LISTENER_ENABLED: "true"
+      SPRING_RABBITMQ_LISTENER_OBSERVATION_ENABLED: "true"
+      MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
+      MESSAGING_SIGNATURE_MODE: ${MESSAGING_SIGNATURE_MODE:-OPTIONAL}
+      # mto-stock por nombre de servicio: los dos corren en esta red. Si stock se arranca desde el
+      # IDE, apuntese al host (MTO_STOCK_URL=http://host.docker.internal:8080 en .env).
+      APP_STOCK_ENABLED: "true"
+      MTO_STOCK_URL: ${MTO_STOCK_URL:-http://stock:8080}
+      # La cuenta de servicio pide su token al mismo emisor que valida los de los usuarios.
+      KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
+      KEYCLOAK_SERVICE_CLIENT_ID: mto-maintenance-svc
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_MAINTENANCE_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-maintenance-api
+      KEYCLOAK_AUDIENCE: mto-maintenance-api
+      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
+      MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_MAINTENANCE_PORT:-8083}:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+
   # El borde: aqui nace la traza distribuida y aqui se autentica. No persiste nada, asi que no
   # depende de la infraestructura de datos.
   #
-  # Los destinos van por nombre de servicio de compose porque los tres corren en la misma red. Si
+  # Los destinos van por nombre de servicio de compose porque los cuatro corren en la misma red. Si
   # se para una aplicacion para arrancarla desde el IDE, hay que apuntar su URL al host: vease
   # MTO_CONFIGURATION_URL / MTO_STOCK_URL en .env.example.
   gateway:
@@ -298,11 +356,12 @@ services:
       SERVER_PORT: 8090
       MTO_CONFIGURATION_URL: ${MTO_CONFIGURATION_URL:-http://configuration:8080}
       MTO_STOCK_URL: ${MTO_STOCK_URL:-http://stock:8080}
+      MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
       KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:5173}
     # host.docker.internal no existe en Linux salvo que se declare; hace falta si se apunta
-    # MTO_CONFIGURATION_URL o MTO_STOCK_URL a un servicio arrancado desde el IDE.
+    # MTO_CONFIGURATION_URL, MTO_STOCK_URL o MTO_MAINTENANCE_URL a un servicio arrancado desde el IDE.
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "auth.mto.local:host-gateway"

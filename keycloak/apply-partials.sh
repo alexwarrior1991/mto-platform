@@ -8,14 +8,14 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los cuatro, asi que va DESPUES de las parciales que los crean.
+# mto-ops-cross-service.json nombra los cinco, asi que va DESPUES de las parciales que los crean.
 # Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
 #
 # Uso:
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los cinco repositorios como hermanos en el mismo directorio.
+# Espera los seis repositorios como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -41,6 +41,7 @@ FICHEROS=(
   "$HERMANOS/mto-stock/keycloak/mto-stock-partial-import.json"
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
+  "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
 
@@ -49,6 +50,7 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
     "$HERMANOS/mto-configuration/keycloak/mto-configuration-dev.json"
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
+    "$HERMANOS/mto-users/keycloak/mto-users-dev.json"
   )
 fi
 
@@ -63,7 +65,7 @@ for fichero in "${FICHEROS[@]}"; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los cinco repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los seis repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 
@@ -184,6 +186,13 @@ json.dump(roles, sys.stdout)
 }
 
 conceder_roles_de_servicio mto-maintenance-svc mto-stock-api stock-read stock-write
+
+# mto-users administra usuarios, roles y perfiles del realm por la Admin API con SU PROPIA cuenta de
+# servicio (nada del realm master). realm-management es un cliente mas del realm, asi que la misma
+# funcion sirve. Son los seis roles minimos: ver y buscar usuarios, gestionarlos (incluidos sus
+# role-mappings), ver y buscar clientes y leer los roles de realm (los perfiles). Ni manage-realm ni
+# manage-clients ni realm-admin: la API asigna roles, no los crea.
+conceder_roles_de_servicio mto-users-svc realm-management view-users query-users manage-users view-clients query-clients view-realm
 
 echo
 echo "Realm '$KC_REALM' ensamblado."

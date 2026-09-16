@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 # Los clientes de API del dominio. mto-frontend tiene que poder emitir tokens dirigidos a todos.
-CLIENTES_API = ("mto-configuration-api", "mto-stock-api", "mto-gateway-api", "mto-maintenance-api")
+CLIENTES_API = ("mto-configuration-api", "mto-stock-api", "mto-gateway-api", "mto-maintenance-api", "mto-users-api")
 
 # Lo unico en lo que el realm local puede apartarse del base. Cualquier otra diferencia significa
 # que alguien toco uno y no el otro, y el stack local estaria probando algo distinto de lo que se
@@ -401,10 +401,12 @@ def main():
         ("mto-stock-partial-import.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json")),
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
         ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
+        ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
         ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
+        ("mto-users-dev.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-dev.json")),
     ]
     # Las parciales que crean clientes y permisos: todo lo que va ANTES del perfil cruzado.
     parciales = orden[:[nombre for nombre, _ in orden].index("mto-ops-cross-service.json")]

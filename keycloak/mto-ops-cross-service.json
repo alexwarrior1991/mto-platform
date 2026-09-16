@@ -25,6 +25,11 @@
               "maintenance-read",
               "ops-metrics",
               "ops-write"
+            ],
+            "mto-users-api": [
+              "users-read",
+              "ops-metrics",
+              "ops-write"
             ]
           }
         }

@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="${{ github.head_ref || github.ref_name }}"
-          for repo in configuration stock gateway maintenance; do
+          for repo in configuration stock gateway maintenance users; do
             if git ls-remote --exit-code --heads \
                  "https://github.com/alexwarrior1991/mto-$repo" "$branch" >/dev/null 2>&1; then
               echo "${repo}_ref=$branch" >> "$GITHUB_OUTPUT"
@@ -79,6 +79,13 @@ jobs:
           ref: ${{ steps.refs.outputs.maintenance_ref }}
           path: mto-maintenance
 
+      - name: Check out mto-users
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-users
+          ref: ${{ steps.refs.outputs.users_ref }}
+          path: mto-users
+
       # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de
       # ese repositorio. Sin dependencias: aqui no hay Maven.
       - name: Check realm consistency
@@ -106,7 +113,7 @@ jobs:
               echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
             fi
           done
-          for app in configuration stock gateway maintenance; do
+          for app in configuration stock gateway maintenance users; do
             if docker compose config --services | grep -qx "$app"; then
               echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
             fi

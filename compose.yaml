@@ -340,10 +340,41 @@ services:
       rabbitmq: {condition: service_healthy}
       keycloak: {condition: service_healthy}
 
+  # Administracion de usuarios, roles y perfiles del realm por la Admin API de Keycloak, con la
+  # cuenta de servicio mto-users-svc (sus roles de realm-management los concede apply-partials.sh).
+  # No tiene base de datos ni broker: todo lo que administra vive en Keycloak.
+  users:
+    image: ghcr.io/alexwarrior1991/mto-users:${MTO_USERS_TAG:-latest}
+    container_name: mto-users
+    profiles: [all, users]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_USERS_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_USERS_CLIENT_ID: mto-users-api
+      KEYCLOAK_AUDIENCE: mto-users-api
+      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      # La Admin API se pide al mismo Keycloak que emite los tokens, por el mismo nombre.
+      KEYCLOAK_AUTH_SERVER_URL: ${KEYCLOAK_AUTH_SERVER_URL:-http://auth.mto.local:8082}
+      KEYCLOAK_REALM: mto
+      KEYCLOAK_ADMIN_CLIENT_ID: mto-users-svc
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${MTO_USERS_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
+    extra_hosts:
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_USERS_PORT:-8084}:8080"
+    depends_on:
+      keycloak: {condition: service_healthy}
+
   # El borde: aqui nace la traza distribuida y aqui se autentica. No persiste nada, asi que no
   # depende de la infraestructura de datos.
   #
-  # Los destinos van por nombre de servicio de compose porque los cuatro corren en la misma red. Si
+  # Los destinos van por nombre de servicio de compose porque los cinco corren en la misma red. Si
   # se para una aplicacion para arrancarla desde el IDE, hay que apuntar su URL al host: vease
   # MTO_CONFIGURATION_URL / MTO_STOCK_URL en .env.example.
   gateway:
@@ -357,11 +388,12 @@ services:
       MTO_CONFIGURATION_URL: ${MTO_CONFIGURATION_URL:-http://configuration:8080}
       MTO_STOCK_URL: ${MTO_STOCK_URL:-http://stock:8080}
       MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
+      MTO_USERS_URL: ${MTO_USERS_URL:-http://users:8080}
       KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:5173}
     # host.docker.internal no existe en Linux salvo que se declare; hace falta si se apunta
-    # MTO_CONFIGURATION_URL, MTO_STOCK_URL o MTO_MAINTENANCE_URL a un servicio arrancado desde el IDE.
+    # MTO_CONFIGURATION_URL, MTO_STOCK_URL, MTO_MAINTENANCE_URL o MTO_USERS_URL a un servicio arrancado desde el IDE.
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "auth.mto.local:host-gateway"

@@ -134,7 +134,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 
 | paso | fichero | repositorio | que aporta |
 |---|---|---|---|
-| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes y `mto-frontend` |
+| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, `mto-frontend` y el perfil de usuario |
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
@@ -155,6 +155,13 @@ hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` → Serv
 **El orden no es un detalle.** Un compuesto solo puede nombrar roles de clientes que ya existan en
 el realm: `mto-ops-cross-service.json` nombra los cinco, asi que va detras de las parciales que los
 crean. Al reves Keycloak responde *App doesn't exist in role definitions* y no aplica nada.
+
+El realm base trae ademas el **perfil de usuario declarativo** con
+`unmanagedAttributePolicy: ADMIN_EDIT`. Sin el, Keycloak 26 descarta en silencio los `attributes`
+que `mto-users` manda al crear o modificar un usuario: la llamada responde 200 y el atributo no
+existe. Se declara con los cuatro atributos del perfil por defecto (`username`, `email`,
+`firstName`, `lastName`) mas la politica; una configuracion que solo lleve la politica deja el
+perfil sin atributos y se pierden `firstName` y `lastName`.
 
 Cada servicio sigue siendo dueño de sus clientes, roles y perfiles, en su propio repositorio: asi
 un rol se cambia en el mismo commit que el codigo que lo comprueba (`SecurityRoles`). La plataforma

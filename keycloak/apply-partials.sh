@@ -142,6 +142,82 @@ print("   ", r.get("overwritten", 0), "sobrescritos,", r.get("added", 0), "anadi
 ' "$respuesta"
 done
 
+# Lo que 'partialImport' NO aplica: 'serviceAccountsEnabled'.
+#
+# El cliente entra en el realm con el flag en FALSE por mucho que su JSON diga true. Medido sobre un
+# realm recien creado: las tres parciales que lo declaran -mto-configuration-svc, mto-maintenance-svc
+# y mto-users-svc- decian true y el realm guardaba false en los tres.
+#
+# Con el flag apagado, Keycloak ni crea la cuenta de servicio ni deja pedirla: responde 400 a
+# /clients/{id}/service-account-user. Y el sintoma no decia nada de eso, porque la respuesta iba
+# directa a Python:
+#
+#   curl: (22) The requested URL returned error: 400
+#   KeyError: 'id'
+#
+# Con 'set -euo pipefail' eso aborta el guion entero, asi que los grants posteriores no se hacian
+# -ni se intentaban- y 'Realm ensamblado' no llegaba a imprimirse. Quien lo sufria se quedaba sin
+# los permisos cruzados sin saber cuales ni por que.
+#
+# Que clientes hay que activar se lee de las PROPIAS parciales, no de una lista aqui: un servicio
+# nuevo con su cuenta de servicio no tiene que acordarse de tocar este guion.
+RUTAS_NATIVAS=()
+for fichero in "${FICHEROS[@]}"; do
+  RUTAS_NATIVAS+=("$(ruta_nativa "$fichero")")
+done
+
+# El id interno de un cliente por su clientId, o vacio si no esta en el realm.
+id_de_cliente() {
+  curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients?clientId=$1" \
+    -H "Authorization: Bearer $TOKEN" \
+    | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")'
+}
+
+activar_cuentas_de_servicio() {
+  local declarados
+  declarados="$(python3 -c '
+import json, sys
+
+vistos = []
+for ruta in sys.argv[1:]:
+    with open(ruta, encoding="utf-8") as f:
+        for cliente in json.load(f).get("clients", []) or []:
+            if cliente.get("serviceAccountsEnabled") and cliente["clientId"] not in vistos:
+                vistos.append(cliente["clientId"])
+sys.stdout.write("\n".join(vistos))
+' "${RUTAS_NATIVAS[@]}")"
+
+  [[ -z "$declarados" ]] && return 0
+
+  local cliente id_cliente representacion
+  while IFS= read -r cliente; do
+    # El \r de Windows otra vez: sin quitarlo, el clientId viaja dentro de la URL de la consulta.
+    cliente="${cliente//$'\r'/}"
+    [[ -z "$cliente" ]] && continue
+
+    echo "Activando la cuenta de servicio de $cliente"
+    id_cliente="$(id_de_cliente "$cliente")"
+    if [[ -z "$id_cliente" ]]; then
+      echo "   no esta en el realm; se omite" >&2
+      continue
+    fi
+
+    # Se lee el cliente entero y se devuelve modificado, en vez de mandar solo el flag: un PUT
+    # parcial funciona en Keycloak por casualidad, no por contrato.
+    representacion="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_cliente" \
+      -H "Authorization: Bearer $TOKEN" \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); d["serviceAccountsEnabled"]=True; json.dump(d,sys.stdout)')"
+
+    curl -sS --fail-with-body -X PUT \
+      "$KC_URL/admin/realms/$KC_REALM/clients/$id_cliente" \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      --data-binary "$representacion"
+    echo "    hecha"
+  done <<< "$declarados"
+}
+
+activar_cuentas_de_servicio
+
 # Lo que una importacion parcial no puede traer: los roles de la cuenta de servicio de un cliente.
 # mto-maintenance-svc llama a mto-stock y necesita stock-read y stock-write de mto-stock-api, pero
 # un partialImport no asigna roles a usuarios de servicio y la parcial de mantenimiento tampoco
@@ -155,16 +231,32 @@ conceder_roles_de_servicio() {
   echo "Concediendo a la cuenta de servicio de $cliente_svc los roles ${roles[*]} de $cliente_api"
 
   local id_svc id_api usuario_svc
-  id_svc="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients?clientId=$cliente_svc" \
-    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")')"
-  id_api="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients?clientId=$cliente_api" \
-    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")')"
+  id_svc="$(id_de_cliente "$cliente_svc")"
+  id_api="$(id_de_cliente "$cliente_api")"
   if [[ -z "$id_svc" || -z "$id_api" ]]; then
     echo "   no se encuentra $cliente_svc o $cliente_api en el realm; se omite" >&2
     return 0
   fi
-  usuario_svc="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_svc/service-account-user" \
-    -H "Authorization: Bearer $TOKEN" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"], end="")')"
+
+  # Sin el '|| true' la respuesta de error se comeria el pipefail y el mensaje moriria con ella.
+  # Lo que se busca aqui es que un fallo se lea, no que se adivine: antes, un 400 en esta llamada
+  # salia como un KeyError de Python que no nombraba ni el cliente ni el motivo.
+  local respuesta
+  respuesta="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_svc/service-account-user" \
+    -H "Authorization: Bearer $TOKEN" || true)"
+  usuario_svc="$(printf '%s' "$respuesta" \
+    | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("id", ""), end="")
+except Exception:
+    print("", end="")')"
+  if [[ -z "$usuario_svc" ]]; then
+    echo "   no se ha podido obtener la cuenta de servicio de $cliente_svc." >&2
+    echo "   Keycloak respondio: $respuesta" >&2
+    echo "   Suele significar que el cliente no tiene la cuenta de servicio activa. Compruebalo con:" >&2
+    echo "     kcadm.sh get clients -r $KC_REALM -q clientId=$cliente_svc --fields serviceAccountsEnabled" >&2
+    return 1
+  fi
 
   local cuerpo
   cuerpo="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_api/roles" \

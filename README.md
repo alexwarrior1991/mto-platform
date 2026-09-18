@@ -142,9 +142,18 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los cinco** |
 | 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` | cada servicio | usuarios de desarrollo y secretos locales de las cuentas de servicio |
+| 7b | *(API de administracion)* | platform | activa la cuenta de servicio de los clientes que la declaran: `mto-configuration-svc`, `mto-maintenance-svc`, `mto-users-svc` |
 | 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc` |
 
 El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 2 al 8, `apply-partials.sh`.
+
+El 7b existe por una limitacion de Keycloak que cuesta cara si no se sabe: **`partialImport` no
+aplica `serviceAccountsEnabled`**. El cliente entra con el flag en `false` por mucho que su JSON
+diga `true`, y con el flag apagado Keycloak ni crea la cuenta de servicio ni deja pedirla —responde
+`400` a `/clients/{id}/service-account-user`—. Medido sobre un realm recien creado: los tres
+`*-svc` lo declaraban y el realm guardaba `false` en los tres. El guion los activa leyendo de las
+propias parciales quien lo declara, asi que un servicio nuevo con cuenta de servicio no obliga a
+tocarlo.
 El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
 y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
 otro —ni, en el caso de `mto-users`, que puede administrar del realm—; en un entorno desplegado se

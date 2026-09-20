@@ -42,6 +42,9 @@ FICHEROS=(
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
+  # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
+  # audience mapper hacia los cinco API: no declara roles, comprueba los de mto-configuration-api.
+  "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
 
@@ -51,6 +54,7 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
     "$HERMANOS/mto-users/keycloak/mto-users-dev.json"
+    "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-dev.json"
   )
 fi
 
@@ -65,7 +69,7 @@ for fichero in "${FICHEROS[@]}"; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los seis repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los siete repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 

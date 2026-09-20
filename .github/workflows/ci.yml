@@ -1,5 +1,5 @@
-# El realm vive repartido en cinco repositorios, asi que este CI se los trae todos: comprobar solo
-# los ficheros de este no dice nada sobre si el conjunto encaja. Los cinco son publicos, de modo
+# El realm vive repartido en seis repositorios, asi que este CI se los trae todos: comprobar solo
+# los ficheros de este no dice nada sobre si el conjunto encaja. Los seis son publicos, de modo
 # que el checkout cruzado no necesita ningun token.
 name: CI
 
@@ -31,8 +31,8 @@ jobs:
         with:
           path: mto-platform
 
-      # El realm se ensambla desde los cinco repositorios, asi que un cambio coordinado vive en la
-      # misma rama en los cuatro. Se usa esa rama en cada hermano si existe y la de por defecto si
+      # El realm se ensambla desde los seis repositorios, asi que un cambio coordinado vive en la
+      # misma rama en todos. Se usa esa rama en cada hermano si existe y la de por defecto si
       # no: sin esto, un PR que anade una importacion parcial se comprueba contra un master que
       # todavia no la tiene, y falla siempre.
       - name: Resolve sibling branches
@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="${{ github.head_ref || github.ref_name }}"
-          for repo in configuration stock gateway maintenance users; do
+          for repo in configuration stock gateway maintenance users backoffice; do
             if git ls-remote --exit-code --heads \
                  "https://github.com/alexwarrior1991/mto-$repo" "$branch" >/dev/null 2>&1; then
               echo "${repo}_ref=$branch" >> "$GITHUB_OUTPUT"
@@ -85,6 +85,13 @@ jobs:
           repository: alexwarrior1991/mto-users
           ref: ${{ steps.refs.outputs.users_ref }}
           path: mto-users
+
+      - name: Check out mto-backoffice
+        uses: actions/checkout@v5
+        with:
+          repository: alexwarrior1991/mto-backoffice
+          ref: ${{ steps.refs.outputs.backoffice_ref }}
+          path: mto-backoffice
 
       # Sustituye a RealmDefinitionsTest, que vivia en mto-configuration y solo veia los ficheros de
       # ese repositorio. Sin dependencias: aqui no hay Maven.

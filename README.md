@@ -63,15 +63,20 @@ docker compose --profile stock up -d                            # infraestructur
 docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 docker compose --profile configuration --profile gateway up -d  # dos de cinco
 docker compose --profile users --profile gateway up -d          # administracion de usuarios detras del gateway
+docker compose --profile backoffice --profile gateway up -d     # la web y el gateway al que llama
 ```
 
 `mto-users` no tiene base de datos ni broker: administra usuarios, roles y perfiles del realm por
 la Admin API de Keycloak con su cuenta de servicio `mto-users-svc`, cuyos roles de
 `realm-management` concede `apply-partials.sh` (paso 8).
 
-`mto-backoffice` (la aplicacion web, Vaadin) todavia no tiene servicio en este compose: se arranca
-desde su repositorio (`./mvnw spring-boot:run`, puerto 8085) contra esta infraestructura y el
-gateway. Cuando exista su imagen en GHCR se anadira con el perfil `backoffice`, como los demas.
+`mto-backoffice` (la aplicacion web, Vaadin) tiene el perfil `backoffice` y necesita el gateway
+(`--profile backoffice --profile gateway`, o `all`). Su servicio lleva `build` ademas de `image`:
+hasta que la imagen exista en GHCR —la publica su CI al fusionar en `master`— compose la
+construye desde el checkout hermano `../mto-backoffice`, asi que `--profile all` funciona igual;
+cuando exista, `docker compose pull backoffice` la trae. En desarrollo lo habitual sigue siendo
+arrancarlo desde su repositorio (`./mvnw spring-boot:run`, puerto 8085) contra esta
+infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `local`.
 
 `mto-maintenance` llama a `mto-stock` para reservar y consumir material: sin el, arranca igual,
 pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,
@@ -108,7 +113,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 | `mto-configuration` | 8081 |
 | `mto-maintenance` | 8083 |
 | `mto-users` | 8084 |
-| `mto-backoffice` | 8085 (desde su repositorio; sin servicio en este compose todavia) |
+| `mto-backoffice` | 8085 |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |

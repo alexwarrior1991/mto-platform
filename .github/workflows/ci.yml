@@ -120,7 +120,7 @@ jobs:
               echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
             fi
           done
-          for app in configuration stock gateway maintenance users; do
+          for app in configuration stock gateway maintenance users backoffice; do
             if docker compose config --services | grep -qx "$app"; then
               echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
             fi

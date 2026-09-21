@@ -1,8 +1,8 @@
 # mto-platform
 
 Entorno de **desarrollo local** del dominio MTO: una sola infraestructura compartida por
-`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users` y `mto-gateway`, y el realm de
-Keycloak que los cinco usan.
+`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-gateway` y
+`mto-backoffice`, y el realm de Keycloak que los seis usan.
 
 No es el mecanismo de despliegue de entornos reales.
 
@@ -32,7 +32,7 @@ tokens es esa URL y tiene que resolverse igual desde dentro de compose y desde e
 127.0.0.1  auth.mto.local  otel.mto.local
 ```
 
-Los seis repositorios tienen que estar como hermanos en el mismo directorio: el script de
+Los siete repositorios tienen que estar como hermanos en el mismo directorio: el script de
 ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio.
 
 ```
@@ -42,7 +42,8 @@ mto/
 ├── mto-stock/
 ├── mto-maintenance/
 ├── mto-users/
-└── mto-gateway/
+├── mto-gateway/
+└── mto-backoffice/
 ```
 
 ## Arrancar
@@ -62,11 +63,20 @@ docker compose --profile stock up -d                            # infraestructur
 docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 docker compose --profile configuration --profile gateway up -d  # dos de cinco
 docker compose --profile users --profile gateway up -d          # administracion de usuarios detras del gateway
+docker compose --profile backoffice --profile gateway up -d     # la web y el gateway al que llama
 ```
 
 `mto-users` no tiene base de datos ni broker: administra usuarios, roles y perfiles del realm por
 la Admin API de Keycloak con su cuenta de servicio `mto-users-svc`, cuyos roles de
 `realm-management` concede `apply-partials.sh` (paso 8).
+
+`mto-backoffice` (la aplicacion web, Vaadin) tiene el perfil `backoffice` y necesita el gateway
+(`--profile backoffice --profile gateway`, o `all`). Su servicio lleva `build` ademas de `image`:
+hasta que la imagen exista en GHCR —la publica su CI al fusionar en `master`— compose la
+construye desde el checkout hermano `../mto-backoffice`, asi que `--profile all` funciona igual;
+cuando exista, `docker compose pull backoffice` la trae. En desarrollo lo habitual sigue siendo
+arrancarlo desde su repositorio (`./mvnw spring-boot:run`, puerto 8085) contra esta
+infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `local`.
 
 `mto-maintenance` llama a `mto-stock` para reservar y consumir material: sin el, arranca igual,
 pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,
@@ -103,6 +113,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 | `mto-configuration` | 8081 |
 | `mto-maintenance` | 8083 |
 | `mto-users` | 8084 |
+| `mto-backoffice` | 8085 |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |
@@ -140,8 +151,9 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
 | 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
+| 5c | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los cinco API; no declara roles |
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los cinco** |
-| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` | cada servicio | usuarios de desarrollo y secretos locales de las cuentas de servicio |
+| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` |
 | 7b | *(API de administracion)* | platform | activa la cuenta de servicio de los clientes que la declaran: `mto-configuration-svc`, `mto-maintenance-svc`, `mto-users-svc` |
 | 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc` |
 
@@ -231,7 +243,8 @@ Sustituye a `RealmDefinitionsTest`, que vivia en `mto-configuration` y solo veia
 ese repositorio. Sin dependencias: este repositorio no lleva Maven. Comprueba, recorriendo los
 ficheros **en el orden en que se aplican**, que ningun compuesto nombre un cliente o un rol que
 todavia no existe, que el realm base y el local no se separen, que el base no gane usuarios ni
-secretos **ni abra el password grant**, que `mto-frontend` emita audiencia para los cinco API, que
+secretos **ni abra el password grant**, que todo cliente de login (`mto-frontend` y `mto-backoffice`)
+emita audiencia para los cinco API, que
 ningun cliente se declare dos veces con contenido distinto, que ningun texto se pase del ancho de
 su columna en Keycloak y que `mto-ops` cubra el Actuator de los cinco servicios.
 
@@ -240,7 +253,7 @@ diferencia de flags entre los dos es precisamente lo que deja el stack local pro
 autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 `DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
-Lo ejecuta el CI de este repositorio, que hace checkout de los seis.
+Lo ejecuta el CI de este repositorio, que hace checkout de los siete.
 
 ## Parar
 

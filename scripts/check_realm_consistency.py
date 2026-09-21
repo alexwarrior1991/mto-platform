@@ -67,7 +67,7 @@ def leer(ruta):
     if not ruta.is_file():
         raise SystemExit(
             f"No se encuentra {ruta}.\n"
-            "Los cinco repositorios tienen que estar como hermanos en el mismo directorio; "
+            "Los siete repositorios tienen que estar como hermanos en el mismo directorio; "
             "usese --repos para indicar otro."
         )
     with ruta.open(encoding="utf-8") as f:
@@ -261,29 +261,40 @@ def el_base_no_abre_el_password_grant(base, problemas):
             )
 
 
-def el_frontal_emite_audiencia_para_los_tres(base, problemas):
-    """Sin el mapper, un token del navegador puede llegar a un servicio sin su clientId en 'aud'.
+def todo_cliente_de_login_emite_audiencia_para_los_api(base, orden, problemas):
+    """Sin el mapper, un token de una aplicacion puede llegar a un servicio sin su clientId en 'aud'.
 
     No es lo unico que pone la audiencia -el mapper 'audience resolve' del scope 'roles' ya anade
     todo cliente en el que el usuario tenga algun rol-, pero el explicito es la garantia: el
     resolutor se cae si se acota el scope del token o el full scope del cliente.
+
+    Vale para todo cliente con el que entra una persona (standardFlowEnabled): mto-frontend, que
+    vive en el base, y los que declare una parcial, como mto-backoffice. Los resource server y las
+    cuentas de servicio no entran aqui: no inician el flujo de codigo.
     """
     frontal = clientes_de(base).get("mto-frontend")
     if frontal is None:
         problemas.error(
             "el realm base no define mto-frontend",
-            "  Es el cliente del navegador y lo unico comun a los tres servicios que vive en el base.",
+            "  Es el cliente del navegador y lo unico comun a los servicios que vive en el base.",
         )
         return
 
-    faltan = [c for c in CLIENTES_API if c not in audiencias_de(frontal)]
-    if faltan:
-        problemas.error(
-            "mto-frontend no emite audiencia para todos los API",
-            f"  Faltan los audience mapper hacia: {faltan}\n"
-            f"  Un token del navegador llegaria a ese servicio sin su clientId en 'aud', y la\n"
-            f"  falta de permisos se veria como un 401 'invalid token' en vez de un 403.",
-        )
+    de_login = [("mto-realm.json", frontal)]
+    for nombre, doc in orden:
+        for cliente in clientes_de(doc).values():
+            if cliente.get("standardFlowEnabled") and cliente["clientId"] != "mto-frontend":
+                de_login.append((nombre, cliente))
+
+    for nombre, cliente in de_login:
+        faltan = [c for c in CLIENTES_API if c not in audiencias_de(cliente)]
+        if faltan:
+            problemas.error(
+                f"{cliente['clientId']} no emite audiencia para todos los API",
+                f"  En {nombre} faltan los audience mapper hacia: {faltan}\n"
+                f"  Un token de esa aplicacion llegaria a ese servicio sin su clientId en 'aud', y la\n"
+                f"  falta de permisos se veria como un 401 'invalid token' en vez de un 403.",
+            )
 
 
 def ningun_cliente_se_declara_dos_veces_distinto(orden, problemas):
@@ -402,11 +413,13 @@ def main():
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
         ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
         ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
+        ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
         ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
         ("mto-users-dev.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-dev.json")),
+        ("mto-backoffice-dev.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-dev.json")),
     ]
     # Las parciales que crean clientes y permisos: todo lo que va ANTES del perfil cruzado.
     parciales = orden[:[nombre for nombre, _ in orden].index("mto-ops-cross-service.json")]
@@ -417,7 +430,7 @@ def main():
     base_y_local_no_se_separan(base, local, problemas)
     el_base_no_trae_usuarios_ni_secretos(base, problemas)
     el_base_no_abre_el_password_grant(base, problemas)
-    el_frontal_emite_audiencia_para_los_tres(base, problemas)
+    todo_cliente_de_login_emite_audiencia_para_los_api(base, orden, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
 

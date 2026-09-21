@@ -1,4 +1,4 @@
-# Infraestructura compartida del dominio MTO y las cuatro aplicaciones que la usan.
+# Infraestructura compartida del dominio MTO y las aplicaciones que la usan.
 #
 # La infraestructura no lleva 'profiles:', asi que arranca siempre. Cada aplicacion lleva
 # 'profiles: [all, <nombre>]', de modo que:
@@ -7,7 +7,8 @@
 #   docker compose up -d                                            # solo infraestructura
 #   docker compose --profile stock up -d                            # infraestructura + mto-stock
 #   docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
-#   docker compose --profile configuration --profile gateway up -d  # dos de tres
+#   docker compose --profile configuration --profile gateway up -d  # dos de seis
+#   docker compose --profile backoffice --profile gateway up -d      # la web y el gateway al que llama
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
 # arrancarlo desde el IDE contra esta misma infraestructura. Por eso Keycloak y el colector OTLP
@@ -400,6 +401,41 @@ services:
       - "otel.mto.local:host-gateway"
     ports:
       - "${MTO_GATEWAY_PORT:-8090}:8090"
+    depends_on:
+      keycloak: {condition: service_healthy}
+
+  # La aplicacion web (Vaadin). No persiste nada: solo necesita Keycloak para el login y el
+  # gateway, al que habla servidor a servidor con el token de la persona.
+  #
+  # Lleva 'build' ademas de 'image' a proposito: hasta que la imagen exista en GHCR (la publica
+  # el CI de mto-backoffice al fusionar en master), compose la construye desde el checkout hermano
+  # (../mto-backoffice) y '--profile all' sigue funcionando. Cuando exista,
+  # 'docker compose pull backoffice' la trae y 'up' deja de construir.
+  backoffice:
+    image: ghcr.io/alexwarrior1991/mto-backoffice:${MTO_BACKOFFICE_TAG:-latest}
+    build:
+      context: ../mto-backoffice
+    container_name: mto-backoffice
+    profiles: [all, backoffice]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_BACKOFFICE_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-backoffice
+      # El secreto del cliente de login 'mto-backoffice'; en local, el de mto-backoffice-dev.json.
+      KEYCLOAK_CLIENT_SECRET: ${MTO_BACKOFFICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      # El gateway por su nombre de servicio. Si el gateway se arranca desde el IDE, apuntese a
+      # http://host.docker.internal:8090.
+      MTO_GATEWAY_URL: ${MTO_GATEWAY_URL:-http://gateway:8090}
+    # El 'iss' de los tokens es http://auth.mto.local:8082 y el navegador entra a Keycloak por ese
+    # mismo nombre: la aplicacion tiene que resolverlo igual que el host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+    ports:
+      # 8085 no es libre: es el redirect URI del cliente en el realm.
+      - "${MTO_BACKOFFICE_PORT:-8085}:8080"
     depends_on:
       keycloak: {condition: service_healthy}
 

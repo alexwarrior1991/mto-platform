@@ -114,17 +114,24 @@ jobs:
         working-directory: mto-platform
         run: |
           set -euo pipefail
+          # Cada lista se lee UNA vez y se comprueba sobre la variable, nunca con
+          # 'docker compose ... | grep -q': grep cierra la tuberia en cuanto encuentra la linea
+          # y, si compose aun tenia lineas que escribir, muere por SIGPIPE; con pipefail la
+          # tuberia entera queda en error y la comprobacion fallaba al azar con "no arranca
+          # sin perfil" sobre un compose correcto.
+          sin_perfil=$(docker compose config --services)
           infra="jaeger keycloak postgres rabbitmq redis"
           for esperado in $infra; do
-            if ! docker compose config --services | grep -qx "$esperado"; then
+            if ! grep -qx "$esperado" <<<"$sin_perfil"; then
               echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
             fi
           done
           for app in configuration stock gateway maintenance users backoffice; do
-            if docker compose config --services | grep -qx "$app"; then
+            if grep -qx "$app" <<<"$sin_perfil"; then
               echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
             fi
-            if ! docker compose --profile "$app" config --services | grep -qx "$app"; then
+            con_perfil=$(docker compose --profile "$app" config --services)
+            if ! grep -qx "$app" <<<"$con_perfil"; then
               echo "El perfil '$app' no incluye su aplicacion"; exit 1
             fi
           done

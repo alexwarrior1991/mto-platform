@@ -140,9 +140,10 @@ services:
       # Habilita /health/ready en el puerto de management (9000), que es lo unico que dice de
       # verdad si Keycloak ya sirve el realm.
       KC_HEALTH_ENABLED: "true"
-    # Se monta la variante local y no mto-realm.json: la local trae el secreto fijo de la cuenta
-    # de servicio y sslRequired en none. mto-realm.json es la definicion de referencia para
-    # entornos desplegados y no debe traer ni una cosa ni la otra.
+    # Se monta la variante local y no mto-realm.json: la local trae sslRequired en none y el
+    # password grant de mto-frontend abierto. mto-realm.json es la definicion de referencia para
+    # entornos desplegados y no debe traer ni una cosa ni la otra. Los secretos fijos de desarrollo
+    # no van en ninguna de las dos: los ponen los -dev.json de cada servicio (apply-partials.sh).
     volumes:
       - ./keycloak/mto-realm-local.json:/opt/keycloak/data/import/mto-realm-local.json:ro
     ports:

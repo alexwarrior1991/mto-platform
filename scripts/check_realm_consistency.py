@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprueba que las piezas del realm 'mto' repartidas por los cinco repositorios encajan.
+"""Comprueba que las piezas del realm 'mto' repartidas por los siete repositorios encajan.
 
 Los ficheros de keycloak/ no los compila nadie: un error en ellos no se descubre hasta que alguien
 levanta el stack o, peor, hasta que se importa en un entorno. Y desde que el realm se ensambla a
@@ -12,7 +12,7 @@ repositorio. Solo libreria estandar: este es un repositorio de composes y no se 
 Uso:
     python3 scripts/check_realm_consistency.py [--repos DIR]
 
-DIR es el directorio que contiene los cinco repositorios como hermanos (por defecto, el padre de
+DIR es el directorio que contiene los siete repositorios como hermanos (por defecto, el padre de
 este repositorio).
 """
 
@@ -394,7 +394,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los cinco repositorios como hermanos.",
+        help="Directorio que contiene los siete repositorios como hermanos.",
     )
     args = parser.parse_args()
 

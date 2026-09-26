@@ -48,8 +48,11 @@ FICHEROS=(
   "$AQUI/mto-ops-cross-service.json"
 )
 
+# Los ficheros de desarrollo (usuarios con contrasena 'local' y los secretos fijos de los clientes
+# confidenciales) van aparte: sus clientes no se importan tal cual (ver aplicar_desarrollo).
+DESARROLLO=()
 if [[ $CON_USUARIOS -eq 1 ]]; then
-  FICHEROS+=(
+  DESARROLLO=(
     "$HERMANOS/mto-configuration/keycloak/mto-configuration-dev.json"
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
@@ -61,7 +64,7 @@ fi
 # Se comprueban todos antes de aplicar ninguno: dejar el realm a medias por un fichero que falta
 # es peor que no haber empezado.
 faltan=0
-for fichero in "${FICHEROS[@]}"; do
+for fichero in "${FICHEROS[@]}" ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
   if [[ ! -f "$fichero" ]]; then
     echo "No se encuentra $fichero" >&2
     faltan=1
@@ -118,7 +121,10 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
-for fichero in "${FICHEROS[@]}"; do
+# Aplica un fichero con partialImport. Con 'sin-secretos' deja fuera los clientes que solo traen
+# {clientId, secret}: de esos se encarga poner_secretos.
+importar() {
+  local fichero="$1" modo="${2:-}" nombre cuerpo respuesta
   nombre="$(basename "$fichero")"
   echo "Aplicando $nombre"
 
@@ -128,10 +134,16 @@ for fichero in "${FICHEROS[@]}"; do
   # explotacion se quedaria sin el Actuator de stock y del gateway, que es justo para lo que existe.
   cuerpo="$(python3 -c '
 import json, sys
-d = json.load(open(sys.argv[1]))
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+if sys.argv[2] == "sin-secretos":
+    clientes = [c for c in d.get("clients", []) or [] if not set(c) <= {"clientId", "secret"}]
+    if clientes:
+        d["clients"] = clientes
+    else:
+        d.pop("clients", None)
 d["ifResourceExists"] = "OVERWRITE"
 json.dump(d, sys.stdout)
-' "$(ruta_nativa "$fichero")")"
+' "$(ruta_nativa "$fichero")" "$modo")"
 
   respuesta="$(curl -sS --fail-with-body -X POST \
     "$KC_URL/admin/realms/$KC_REALM/partialImport" \
@@ -144,30 +156,10 @@ import json, sys
 r = json.loads(sys.argv[1] or "{}")
 print("   ", r.get("overwritten", 0), "sobrescritos,", r.get("added", 0), "anadidos,", r.get("skipped", 0), "omitidos")
 ' "$respuesta"
-done
+}
 
-# Lo que 'partialImport' NO aplica: 'serviceAccountsEnabled'.
-#
-# El cliente entra en el realm con el flag en FALSE por mucho que su JSON diga true. Medido sobre un
-# realm recien creado: las tres parciales que lo declaran -mto-configuration-svc, mto-maintenance-svc
-# y mto-users-svc- decian true y el realm guardaba false en los tres.
-#
-# Con el flag apagado, Keycloak ni crea la cuenta de servicio ni deja pedirla: responde 400 a
-# /clients/{id}/service-account-user. Y el sintoma no decia nada de eso, porque la respuesta iba
-# directa a Python:
-#
-#   curl: (22) The requested URL returned error: 400
-#   KeyError: 'id'
-#
-# Con 'set -euo pipefail' eso aborta el guion entero, asi que los grants posteriores no se hacian
-# -ni se intentaban- y 'Realm ensamblado' no llegaba a imprimirse. Quien lo sufria se quedaba sin
-# los permisos cruzados sin saber cuales ni por que.
-#
-# Que clientes hay que activar se lee de las PROPIAS parciales, no de una lista aqui: un servicio
-# nuevo con su cuenta de servicio no tiene que acordarse de tocar este guion.
-RUTAS_NATIVAS=()
 for fichero in "${FICHEROS[@]}"; do
-  RUTAS_NATIVAS+=("$(ruta_nativa "$fichero")")
+  importar "$fichero"
 done
 
 # El id interno de un cliente por su clientId, o vacio si no esta en el realm.
@@ -177,50 +169,60 @@ id_de_cliente() {
     | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "", end="")'
 }
 
-activar_cuentas_de_servicio() {
-  local declarados
-  declarados="$(python3 -c '
+# Los ficheros de desarrollo no se importan tal cual. Una importacion parcial con OVERWRITE
+# sustituye el cliente ENTERO por lo que trae el fichero, y los de desarrollo reabren cada cliente
+# confidencial solo con {clientId, secret}. Medido sobre Keycloak 26.1.5 con un realm recien
+# creado: tras aplicarlos, mto-backoffice se quedaba sin redirect URI, sin post-logout y sin sus
+# cinco audience mapper, asi que el login no podia funcionar; y las tres cuentas de servicio
+# (mto-configuration-svc, mto-maintenance-svc y mto-users-svc) sin su audiencia hacia
+# mto-stock-api, sin la cuenta de servicio y con el flujo de navegador abierto.
+#
+# Ese era tambien el origen del 'serviceAccountsEnabled' en false que este guion reponia con un
+# paso propio convencido de que partialImport no aplicaba el flag: si lo aplica, y lo que lo borraba
+# era el fichero de desarrollo. Ahora de esos ficheros se importa todo menos los clientes que solo
+# traen el secreto, y el secreto se pone sobre el cliente ya importado. scripts/check_applied_realm.py
+# lo comprueba en el CI contra un Keycloak de verdad.
+poner_secretos() {
+  local fichero="$1" pares cliente secreto id_cliente representacion
+  pares="$(python3 -c '
 import json, sys
+for c in json.load(open(sys.argv[1], encoding="utf-8")).get("clients", []) or []:
+    if set(c) <= {"clientId", "secret"} and "secret" in c:
+        print(c["clientId"] + "\t" + c["secret"])
+' "$(ruta_nativa "$fichero")")"
 
-vistos = []
-for ruta in sys.argv[1:]:
-    with open(ruta, encoding="utf-8") as f:
-        for cliente in json.load(f).get("clients", []) or []:
-            if cliente.get("serviceAccountsEnabled") and cliente["clientId"] not in vistos:
-                vistos.append(cliente["clientId"])
-sys.stdout.write("\n".join(vistos))
-' "${RUTAS_NATIVAS[@]}")"
+  [[ -z "$pares" ]] && return 0
 
-  [[ -z "$declarados" ]] && return 0
-
-  local cliente id_cliente representacion
-  while IFS= read -r cliente; do
-    # El \r de Windows otra vez: sin quitarlo, el clientId viaja dentro de la URL de la consulta.
+  while IFS=$'\t' read -r cliente secreto; do
+    # El \r de Windows: sin quitarlo, el clientId viaja dentro de la URL y el secreto con el.
     cliente="${cliente//$'\r'/}"
+    secreto="${secreto//$'\r'/}"
     [[ -z "$cliente" ]] && continue
 
-    echo "Activando la cuenta de servicio de $cliente"
+    echo "    secreto local de $cliente"
     id_cliente="$(id_de_cliente "$cliente")"
     if [[ -z "$id_cliente" ]]; then
       echo "   no esta en el realm; se omite" >&2
       continue
     fi
 
-    # Se lee el cliente entero y se devuelve modificado, en vez de mandar solo el flag: un PUT
-    # parcial funciona en Keycloak por casualidad, no por contrato.
+    # Se lee el cliente entero y se devuelve con el secreto, en vez de mandar solo el secreto: un
+    # PUT parcial funciona en Keycloak por casualidad, no por contrato.
     representacion="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM/clients/$id_cliente" \
       -H "Authorization: Bearer $TOKEN" \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); d["serviceAccountsEnabled"]=True; json.dump(d,sys.stdout)')"
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); d["secret"]=sys.argv[1]; json.dump(d,sys.stdout)' "$secreto")"
 
     curl -sS --fail-with-body -X PUT \
       "$KC_URL/admin/realms/$KC_REALM/clients/$id_cliente" \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
       --data-binary "$representacion"
-    echo "    hecha"
-  done <<< "$declarados"
+  done <<< "$pares"
 }
 
-activar_cuentas_de_servicio
+for fichero in ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
+  importar "$fichero" sin-secretos
+  poner_secretos "$fichero"
+done
 
 # Lo que una importacion parcial no puede traer: los roles de la cuenta de servicio de un cliente.
 # mto-maintenance-svc llama a mto-stock y necesita stock-read y stock-write de mto-stock-api, pero

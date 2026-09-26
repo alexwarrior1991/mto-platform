@@ -143,3 +143,25 @@ jobs:
           bash -n keycloak/apply-partials.sh
           sudo apt-get install -y --no-install-recommends shellcheck >/dev/null 2>&1 || true
           command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh || true
+
+      # Lo de arriba lee los ficheros; lo que Keycloak hace con ellos solo se ve aplicandolos. Una
+      # importacion parcial con OVERWRITE sustituye el cliente entero, y los ficheros de desarrollo
+      # dejaban asi al backoffice sin redirect URI y a las cuentas de servicio sin su audiencia sin
+      # que ninguna comprobacion estatica lo viera. Aqui se ensambla el realm sobre el Keycloak del
+      # compose (el .env lo dejo 'Validate compose') y se comprueba con que se queda.
+      - name: Start Keycloak
+        working-directory: mto-platform
+        run: docker compose up -d --wait --wait-timeout 300 keycloak
+
+      - name: Assemble the realm on Keycloak
+        working-directory: mto-platform
+        run: ./keycloak/apply-partials.sh
+
+      - name: Check the assembled realm
+        working-directory: mto-platform
+        run: python3 scripts/check_applied_realm.py --repos ..
+
+      - name: Keycloak log
+        if: failure()
+        working-directory: mto-platform
+        run: docker compose logs --no-color --tail 200 keycloak

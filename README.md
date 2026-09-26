@@ -153,19 +153,27 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
 | 5c | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los cinco API; no declara roles |
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los cinco** |
-| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` |
-| 7b | *(API de administracion)* | platform | activa la cuenta de servicio de los clientes que la declaran: `mto-configuration-svc`, `mto-maintenance-svc`, `mto-users-svc` |
+| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
 | 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc` |
 
 El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 2 al 8, `apply-partials.sh`.
 
-El 7b existe por una limitacion de Keycloak que cuesta cara si no se sabe: **`partialImport` no
-aplica `serviceAccountsEnabled`**. El cliente entra con el flag en `false` por mucho que su JSON
-diga `true`, y con el flag apagado Keycloak ni crea la cuenta de servicio ni deja pedirla —responde
-`400` a `/clients/{id}/service-account-user`—. Medido sobre un realm recien creado: los tres
-`*-svc` lo declaraban y el realm guardaba `false` en los tres. El guion los activa leyendo de las
-propias parciales quien lo declara, asi que un servicio nuevo con cuenta de servicio no obliga a
-tocarlo.
+Los secretos del paso 7 no se importan con el resto del fichero, y el motivo cuesta caro si no se
+sabe: **una importacion parcial con `OVERWRITE` sustituye el cliente ENTERO** por lo que trae el
+fichero, y los ficheros de desarrollo reabren cada cliente confidencial solo con `{clientId, secret}`.
+Medido sobre Keycloak 26.1.5 con un realm recien creado, al aplicarlos tal cual:
+
+- `mto-backoffice` se quedaba sin redirect URI, sin post-logout y sin sus cinco audience mapper, asi
+  que el login del backoffice no podia funcionar;
+- las tres cuentas de servicio perdian su audiencia hacia `mto-stock-api` y la cuenta de servicio, y
+  ganaban el flujo de navegador.
+
+Antes se creia que `partialImport` no aplicaba `serviceAccountsEnabled`, y el guion lo reponia con un
+paso propio (el antiguo 7b). Si lo aplica: lo que lo borraba era el fichero de desarrollo. Ahora de
+esos ficheros se importa todo menos los clientes que solo traen el secreto, y el secreto se pone sobre
+el cliente ya importado (se lee entero y se devuelve con el secreto). `scripts/check_applied_realm.py`
+lo comprueba en el CI contra un Keycloak de verdad (abajo).
+
 El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
 y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
 otro —ni, en el caso de `mto-users`, que puede administrar del realm—; en un entorno desplegado se
@@ -254,6 +262,19 @@ autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 `DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
 Lo ejecuta el CI de este repositorio, que hace checkout de los siete.
+
+### Y que Keycloak se queda con lo que dicen
+
+```bash
+./keycloak/apply-partials.sh && python3 scripts/check_applied_realm.py
+```
+
+Leer los ficheros no basta: lo que Keycloak hace con ellos solo se ve aplicandolos, y el fallo de los
+secretos de desarrollo (arriba) no lo veia ninguna comprobacion estatica. `check_applied_realm.py`
+lee el realm ya ensamblado por la API de administracion y exige a cada cliente lo que declara su
+parcial (flags, URIs, atributos y audience mapper), a cada secreto de desarrollo que sea el que tiene
+su cliente y a cada cuenta de servicio los roles que le concede el guion. El CI lo ejecuta tras
+levantar el Keycloak del compose y aplicar las parciales, en el mismo job.
 
 ## Parar
 

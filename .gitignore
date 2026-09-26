@@ -5,6 +5,9 @@
 postgres/data/
 data/
 
+# Lo deja Python al importar check_realm_consistency desde check_applied_realm.
+__pycache__/
+
 ### IDE ###
 .idea
 *.iml

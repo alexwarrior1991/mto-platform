@@ -255,6 +255,20 @@ autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 
 Lo ejecuta el CI de este repositorio, que hace checkout de los siete.
 
+### Y que Keycloak se queda con lo que dicen
+
+```bash
+./keycloak/apply-partials.sh && python3 scripts/check_applied_realm.py
+```
+
+Leer los ficheros no basta: lo que Keycloak hace con ellos solo se ve aplicandolos, y una importacion
+parcial con `OVERWRITE` sustituye el cliente entero por lo que trae el fichero, cosa que ninguna
+comprobacion estatica ve. `check_applied_realm.py` lee el realm ya ensamblado por la API de
+administracion y exige a cada cliente lo que declara su parcial (flags, URIs, atributos y audience
+mapper), a cada secreto de desarrollo que sea el que tiene su cliente y a cada cuenta de servicio los
+roles que le concede el guion. El CI lo ejecuta tras levantar el Keycloak del compose y aplicar las
+parciales, en el mismo job.
+
 ## Parar
 
 ```bash

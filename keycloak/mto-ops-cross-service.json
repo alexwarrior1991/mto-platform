@@ -30,6 +30,13 @@
               "users-read",
               "ops-metrics",
               "ops-write"
+            ],
+            "mto-notification-api": [
+              "notification-inbox",
+              "notification-activity-read",
+              "notification-admin",
+              "ops-metrics",
+              "ops-write"
             ]
           }
         }

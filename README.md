@@ -1,8 +1,8 @@
 # mto-platform
 
 Entorno de **desarrollo local** del dominio MTO: una sola infraestructura compartida por
-`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-gateway` y
-`mto-backoffice`, y el realm de Keycloak que los seis usan.
+`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-notification`, `mto-gateway`
+y `mto-backoffice`, y el realm de Keycloak que los siete usan.
 
 No es el mecanismo de despliegue de entornos reales.
 
@@ -20,8 +20,9 @@ Cada repositorio traia su propio stack completo, y eso provocaba tres problemas 
   fallaba**: ni un error, ni un aviso.
 - **Los stacks chocaban de puertos** en 5432, 5672, 15672, 8082, 9000, 16686 y 4318.
 
-Aqui hay un solo Postgres con las tres bases, un solo Redis, **un solo broker**, un solo Keycloak y
-un solo colector de trazas.
+Aqui hay un solo Postgres con las cuatro bases, un solo Redis, **un solo broker**, un solo Keycloak,
+un solo colector de trazas y un solo buzon de correo (Mailpit) al que va todo lo que se manda en
+local.
 
 ## Requisitos
 
@@ -32,7 +33,7 @@ tokens es esa URL y tiene que resolverse igual desde dentro de compose y desde e
 127.0.0.1  auth.mto.local  otel.mto.local
 ```
 
-Los siete repositorios tienen que estar como hermanos en el mismo directorio: el script de
+Los ocho repositorios tienen que estar como hermanos en el mismo directorio: el script de
 ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio.
 
 ```
@@ -42,6 +43,7 @@ mto/
 ├── mto-stock/
 ├── mto-maintenance/
 ├── mto-users/
+├── mto-notification/
 ├── mto-gateway/
 └── mto-backoffice/
 ```
@@ -64,6 +66,7 @@ docker compose --profile stock --profile maintenance up -d      # mto-maintenanc
 docker compose --profile configuration --profile gateway up -d  # dos de cinco
 docker compose --profile users --profile gateway up -d          # administracion de usuarios detras del gateway
 docker compose --profile backoffice --profile gateway up -d     # la web y el gateway al que llama
+docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 ```
 
 `mto-users` no tiene base de datos ni broker: administra usuarios, roles y perfiles del realm por
@@ -82,6 +85,15 @@ infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `l
 pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,
 aisladores de seccion) llegan por los eventos de `mto-configuration`, asi que para verlos hace
 falta que ese servicio haya publicado algo.
+
+`mto-notification` (el registro de actividad y las notificaciones del dominio) tiene el perfil
+`notification` y su propia base en el mismo Postgres. Lo alimentan los eventos de los demas
+servicios por el broker y los eventos del propio realm, que lee por la Admin API de Keycloak con su
+cuenta de servicio `mto-notification-svc` (`view-events`, paso 8); el correo urgente lo manda a
+Mailpit (abajo). Su imagen lleva `build` ademas de `image`, como el backoffice: hasta que su CI la
+publique en GHCR, compose la construye desde `../mto-notification`. Que fuentes escucha y que
+avisos manda en cada fase lo dice su propio README; `scripts/smoke_notification.sh` comprueba de
+punta a punta lo que ya esta en el stack.
 
 ### Trabajar sobre un servicio
 
@@ -114,18 +126,33 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 | `mto-maintenance` | 8083 |
 | `mto-users` | 8084 |
 | `mto-backoffice` | 8085 |
+| `mto-notification` | 8086 |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |
 | PostgreSQL | 5432 |
 | Redis | 6379 |
 | RabbitMQ | 5672 (consola 15672) |
+| Mailpit | 1025 (SMTP), 8025 (buzon web) |
 
 Todos son parametrizables desde `.env`.
 
 El gateway enruta `/api/configuration/**` a `/api/v1/configuration/**`, `/api/stock/**` a
-`/api/v1/inventory/**`, `/api/maintenance/**` a `/api/v1/maintenance/**` y `/api/users/**` a
-`/api/v1/users/**`.
+`/api/v1/inventory/**`, `/api/maintenance/**` a `/api/v1/maintenance/**`, `/api/users/**` a
+`/api/v1/users/**` y `/api/notifications/**` a `/api/v1/notifications/**`.
+
+## El correo
+
+Nada sale del entorno local: `mailpit` recibe todo lo que se manda por SMTP y lo ensena en
+`http://localhost:8025`. Lo usan dos cosas:
+
+- **Keycloak**, cuyo `smtpServer` apunta a Mailpit **solo en `mto-realm-local.json`** (es un delta
+  declarado en `check_realm_consistency.py`; en lo que se despliega el correo se configura en la
+  consola, con sus credenciales). Con el, el correo de acciones de `mto-users` (contrasena temporal,
+  verificar email) llega en vez de fallar con un 502 `KC-502`, que era lo que pasaba sin SMTP.
+- **`mto-notification`**, que manda a Mailpit los avisos urgentes (`SPRING_MAIL_HOST=mailpit`).
+
+Mailpit no tiene perfil: es infraestructura, como el broker, y entra en la lista `infra` del CI.
 
 ## Las imagenes
 
@@ -145,18 +172,20 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 
 | paso | fichero | repositorio | que aporta |
 |---|---|---|---|
-| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, `mto-frontend` y el perfil de usuario |
+| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, los eventos (abajo), `mto-frontend` y el perfil de usuario |
+| 1b | `mto-notification-partial-import.json` | notification | `mto-notification-api`, `mto-notification-svc`, sus permisos y los perfiles `mto-notification-*`. **La primera de las parciales**: los perfiles de los demas servicios nombraran `notification-inbox` (cada persona tiene su bandeja), y un compuesto solo puede nombrar roles de un cliente que ya exista |
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
 | 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
-| 5c | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los cinco API; no declara roles |
-| 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los cinco** |
-| 7 | `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
-| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc` |
+| 5c | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los seis API; no declara roles |
+| 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los seis** (y la bandeja, el registro y la administracion de `mto-notification`) |
+| 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
+| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc` |
+| 9 | *(API de administracion)* | platform | los eventos del realm tal como los declara `mto-realm.json` (`events/config` y el atributo `adminEventsExpiration`) y, si se aplican los usuarios de desarrollo, el `smtpServer` hacia Mailpit de `mto-realm-local.json` |
 
-El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 2 al 8, `apply-partials.sh`.
+El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 1b al 9, `apply-partials.sh`.
 
 Los secretos del paso 7 no se importan con el resto del fichero, y el motivo cuesta caro si no se
 sabe: **una importacion parcial con `OVERWRITE` sustituye el cliente ENTERO** por lo que trae el
@@ -177,13 +206,39 @@ lo comprueba en el CI contra un Keycloak de verdad (abajo).
 El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
 y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
 otro —ni, en el caso de `mto-users`, que puede administrar del realm—; en un entorno desplegado se
-hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` → Service accounts roles).
-`mto-users-svc` lleva solo esos seis roles de `realm-management`: ni `manage-realm`, ni
-`manage-clients`, ni `realm-admin`, y nunca una credencial del realm `master`.
+hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` / `mto-notification-svc` →
+Service accounts roles). `mto-users-svc` lleva solo esos seis roles de `realm-management`: ni
+`manage-realm`, ni `manage-clients`, ni `realm-admin`, y nunca una credencial del realm `master`.
+`mto-notification-svc` es un lector: `view-events` para los eventos y los cinco de solo lectura del
+directorio para poner nombre y correo a una audiencia; nunca `manage-events` (ni reconfigura ni
+borra eventos) ni `manage-users`.
+
+El 9 existe porque los eventos del realm son un ajuste del realm, no de un cliente, y ninguna
+parcial los trae. El `--import-realm` del paso 1 ya los aplica, pero solo al crear el realm: un
+Keycloak que ya tenia el realm de antes de que existieran, o un entorno desplegado donde se importo
+una vez, se quedaria sin ellos y `mto-notification` leeria una lista vacia sin que nada fallara. Por
+la API es reejecutable.
 
 **El orden no es un detalle.** Un compuesto solo puede nombrar roles de clientes que ya existan en
-el realm: `mto-ops-cross-service.json` nombra los cinco, asi que va detras de las parciales que los
-crean. Al reves Keycloak responde *App doesn't exist in role definitions* y no aplica nada.
+el realm: `mto-ops-cross-service.json` nombra los seis, asi que va detras de las parciales que los
+crean; y la de `mto-notification` va la primera porque los perfiles de los demas nombraran sus
+permisos. Al reves Keycloak responde *App doesn't exist in role definitions* y no aplica nada.
+
+### Los eventos del realm
+
+`mto-realm.json` (y el local, igual) activa los **eventos de acceso** (`eventsEnabled`, 7 dias de
+`eventsExpiration`) con una lista explicita de tipos —los que hablan de una persona: `LOGIN`,
+`LOGIN_ERROR`, `LOGOUT`, los cambios de contrasena y de credenciales, los bloqueos, `IMPERSONATE`,
+`UPDATE_PROFILE`, `UPDATE_EMAIL`— y **no** los de maquina (`CLIENT_LOGIN`, `CODE_TO_TOKEN`,
+`REFRESH_TOKEN`, `INTROSPECT_TOKEN`, `USER_INFO_REQUEST`), que serian uno por token de cada cuenta
+de servicio y llenarian la tabla sin decir nada. Y los **eventos de administracion**
+(`adminEventsEnabled`, `adminEventsDetailsEnabled: true`, 7 dias en el atributo de realm
+`adminEventsExpiration`): quien cambio que en el realm, desde que cliente y desde que IP. La
+representacion que llevan pasa por `StripSecretsUtils` en Keycloak, asi que nunca contiene una
+credencial. Siete dias bastan porque Keycloak no es el archivo: `mto-notification` los lee cada
+pocos segundos y se los queda. `check_realm_consistency.py` exige que esten activados con los tipos
+imprescindibles y sin los ruidosos, y `check_applied_realm.py` que Keycloak se haya quedado con
+ellos.
 
 El realm base trae ademas el **perfil de usuario declarativo** con
 `unmanagedAttributePolicy: ADMIN_EDIT`. Sin el, Keycloak 26 descarta en silencio los `attributes`
@@ -213,6 +268,7 @@ Los crea el paso 7. La contraseña de todos es `local`.
 | `almacen.lector` / `.operario` / `.responsable` | `mto-warehouse-viewer` / `mto-warehouse-operator` / `mto-warehouse-admin` |
 | `mantenimiento.lector` / `.tecnico` / `.responsable` | `mto-maintenance-viewer` / `mto-maintenance-technician` / `mto-maintenance-manager` |
 | `usuarios.lector` / `.gestor` / `.responsable` | `mto-users-viewer` / `mto-users-manager` / `mto-users-admin` |
+| `notificacion.lector` / `.auditor` / `.responsable` | `mto-notification-viewer` / `mto-notification-auditor` / `mto-notification-admin` |
 
 ### Pedir un token a mano
 
@@ -251,17 +307,18 @@ Sustituye a `RealmDefinitionsTest`, que vivia en `mto-configuration` y solo veia
 ese repositorio. Sin dependencias: este repositorio no lleva Maven. Comprueba, recorriendo los
 ficheros **en el orden en que se aplican**, que ningun compuesto nombre un cliente o un rol que
 todavia no existe, que el realm base y el local no se separen, que el base no gane usuarios ni
-secretos **ni abra el password grant**, que todo cliente de login (`mto-frontend` y `mto-backoffice`)
-emita audiencia para los cinco API, que
-ningun cliente se declare dos veces con contenido distinto, que ningun texto se pase del ancho de
-su columna en Keycloak y que `mto-ops` cubra el Actuator de los cinco servicios.
+secretos **ni abra el password grant**, que los eventos del realm esten activados con los tipos
+que `mto-notification` necesita y sin los de maquina, que todo cliente de login (`mto-frontend` y
+`mto-backoffice`) emita audiencia para los seis API, que ningun cliente se declare dos veces con
+contenido distinto, que ningun texto se pase del ancho de su columna en Keycloak y que `mto-ops`
+cubra el Actuator de los seis servicios.
 
 Los clientes del realm base y el local se comparan **campo a campo**, no solo por su nombre: una
 diferencia de flags entre los dos es precisamente lo que deja el stack local probando una
 autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 `DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
-Lo ejecuta el CI de este repositorio, que hace checkout de los siete.
+Lo ejecuta el CI de este repositorio, que hace checkout de los ocho.
 
 ### Y que Keycloak se queda con lo que dicen
 
@@ -273,8 +330,24 @@ Leer los ficheros no basta: lo que Keycloak hace con ellos solo se ve aplicandol
 secretos de desarrollo (arriba) no lo veia ninguna comprobacion estatica. `check_applied_realm.py`
 lee el realm ya ensamblado por la API de administracion y exige a cada cliente lo que declara su
 parcial (flags, URIs, atributos y audience mapper), a cada secreto de desarrollo que sea el que tiene
-su cliente y a cada cuenta de servicio los roles que le concede el guion. El CI lo ejecuta tras
-levantar el Keycloak del compose y aplicar las parciales, en el mismo job.
+su cliente, a cada cuenta de servicio los roles que le concede el guion, y a los eventos del realm
+y al SMTP que sean los que declaran los ficheros. El CI lo ejecuta tras levantar el Keycloak del
+compose y aplicar las parciales, en el mismo job.
+
+### Y que el stack entero hace lo que se espera
+
+```bash
+docker compose --profile all up -d && ./keycloak/apply-partials.sh
+scripts/smoke_notification.sh
+```
+
+Con el stack levantado, `scripts/smoke_notification.sh` comprueba de punta a punta, con `curl` y
+tokens del *password grant* local, lo que `mto-notification` necesita del resto: que responde y que
+el gateway le enruta, que el token de una persona lleva su audiencia y sus permisos (y que un permiso
+no abre el recurso de otro), que Keycloak registra un login y sus fallos y que `mto-notification-svc`
+puede leerlos, y que el correo del realm llega a Mailpit. Cada fase del servicio anade sus pasos
+(la racha de fallos, la importacion resumida, la orden urgente, el material bajo minimo, el cambio
+hecho fuera de la aplicacion); el guion dice cuales estan ya y cuales no.
 
 ## Parar
 
@@ -286,3 +359,15 @@ docker compose --profile all down -v   # borra volumenes; el init de Postgres vu
 Los usuarios y las bases los crea `postgres/init/01-databases.sql`, que PostgreSQL ejecuta **solo**
 en la primera inicializacion del volumen. Cambiar un nombre o una credencial de base en `.env`
 exige `down -v`.
+
+### Una base nueva en un stack ya levantado
+
+Una base que se anade despues (la de `mto-notification` lo fue) no aparece sola en un volumen que
+ya existia, porque el init no vuelve a ejecutarse. No hace falta `down -v` ni perder datos: el
+guion es reejecutable (crea solo lo que no existe), asi que basta con recrear `postgres` para que
+lleve las variables nuevas y pasarselo a `psql` dentro del contenedor:
+
+```bash
+docker compose up -d --force-recreate postgres
+docker compose exec postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/01-databases.sql'
+```

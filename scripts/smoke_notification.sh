@@ -22,16 +22,25 @@
 #      que lo abre, la cadena deja pasar (404 mientras el recurso no existe: esta es la fase 1).
 #   4. Keycloak registra los accesos y mto-notification-svc puede leerlos con view-events: un login
 #      y tres fallos seguidos de una persona aparecen en /admin/realms/mto/events.
-#   5. Los eventos de administracion tambien: un cambio hecho por mto-users llega con el clientId
-#      de su cuenta de servicio, que es lo que distingue un cambio de la aplicacion de uno hecho
-#      en la consola.
+#   5. Los eventos de administracion tambien: un cambio hecho por mto-users llega con el id interno
+#      del cliente de su cuenta de servicio (authDetails.clientId es un UUID, no el clientId), que
+#      es lo que distingue un cambio de la aplicacion de uno hecho en la consola.
 #   6. El correo del realm llega a Mailpit: el correo de acciones de mto-users, que sin SMTP
 #      fallaba con un 502, aparece en el buzon.
 #
+# Fase 2a (el servicio):
+#
+#   7. El lector de Keycloak alimenta el registro: las dos fuentes dan una pasada buena, el login y
+#      los tres fallos del paso 4 salen por /access (con el permiso del auditor) y nunca por /activity.
+#   8. Tres fallos seguidos son UNA racha (access.login.streak) y UN aviso: en la bandeja de
+#      config.ops (perfil mto-ops), que la marca leida y que notificacion.lector no ve; por correo,
+#      con la entrega expandida por el directorio y el mensaje en Mailpit. Un cuarto fallo no repite.
+#   9. Un cambio del realm hecho con admin-cli llega como users.admin.user-updated con actor PERSON
+#      y avisa como «fuera de la aplicacion»; el del paso 5, hecho por mto-users, llega como SERVICE.
+#
 # Con cada fase del servicio se anaden aqui sus pasos, en este orden (README de mto-notification):
-# la bandeja y el registro por la API (2a), la racha de tres fallos como UN aviso (2a), la
-# importacion de LOV como UN aviso resumido y la de perfiles como UNA linea con su recuento (2b/2d),
-# el cambio hecho fuera de la aplicacion frente al hecho desde el backoffice (2c/2d), la orden
+# la importacion de LOV como UN aviso resumido y la de perfiles como UNA linea con su recuento (2b/2d),
+# el cambio hecho desde el backoffice con la persona y el de Keycloak fundido (2c/2d), la orden
 # urgente que avisa a mantenimiento.responsable con correo (3b) y el material bajo minimo que avisa
 # a almacen.responsable una sola vez al dia (4b).
 
@@ -186,13 +195,11 @@ if [[ -n "$TOKEN_LECTOR" ]]; then
   c="$(codigo -H "Authorization: Bearer $TOKEN_LECTOR" "$API/admin/sources")"
   [[ "$c" == "403" ]] && ok "GET /admin/sources sin notification-admin: 403" \
     || mal "GET /admin/sources como notificacion.lector: $c (se esperaba 403)"
-  # En la fase 1 no hay recursos todavia: la cadena deja pasar y el servicio responde 404 (HTTP-404).
-  # Cuando exista la bandeja, este paso pasara a esperar 200.
   c="$(codigo -H "Authorization: Bearer $TOKEN_LECTOR" "$API/inbox")"
   case "$c" in
-    200) ok "GET /inbox con notification-inbox: 200 (la bandeja ya esta en el stack)" ;;
-    404) ok "GET /inbox con notification-inbox: 404, la cadena deja pasar y el recurso aun no existe (fase 1)" ;;
-    *)   mal "GET /inbox como notificacion.lector: $c (se esperaba 200 o, en la fase 1, 404)" ;;
+    200) ok "GET /inbox con notification-inbox: 200, la bandeja de notificacion.lector" ;;
+    404) mal "GET /inbox con notification-inbox: 404, la imagen del stack es anterior a la fase 2a" ;;
+    *)   mal "GET /inbox como notificacion.lector: $c (se esperaba 200)" ;;
   esac
 fi
 
@@ -279,16 +286,22 @@ else
       mal "PATCH /api/users/$ID_LECTOR/enabled: $c"
     else
       sleep 1
+      # authDetails.clientId trae el id INTERNO del cliente (un UUID), no su clientId: se resuelve
+      # con view-clients, que es lo mismo que hace mto-notification al leerlo.
+      ID_USERS_SVC="$(curl -sS -H "Authorization: Bearer $TOKEN_SVC" "$KC_URL/admin/realms/$KC_REALM/clients?clientId=mto-users-svc" 2>/dev/null \
+        | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d[0]["id"] if d else "", end="")')"
       c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_SVC" \
         "$KC_URL/admin/realms/$KC_REALM/admin-events?resourceTypes=USER&operationTypes=UPDATE&max=20")"
-      if [[ "$c" == "200" ]] && python3 -c '
+      if [[ -z "$ID_USERS_SVC" ]]; then
+        mal "mto-notification-svc no puede leer el cliente mto-users-svc (falta view-clients?)"
+      elif [[ "$c" == "200" ]] && python3 -c '
 import json, sys
 eventos = json.load(open(sys.argv[1]))
-sys.exit(0 if any(e.get("resourcePath") == "users/" + sys.argv[2] and (e.get("authDetails") or {}).get("clientId") == "mto-users-svc" for e in eventos) else 1)
-' "$CUERPO" "$ID_LECTOR"; then
-        ok "el UPDATE de users/$ID_LECTOR esta en /admin-events con authDetails.clientId = mto-users-svc"
+sys.exit(0 if any(e.get("resourcePath") == "users/" + sys.argv[2] and (e.get("authDetails") or {}).get("clientId") == sys.argv[3] for e in eventos) else 1)
+' "$CUERPO" "$ID_LECTOR" "$ID_USERS_SVC"; then
+        ok "el UPDATE de users/$ID_LECTOR esta en /admin-events con authDetails.clientId = id interno de mto-users-svc"
       else
-        mal "el cambio de mto-users no aparece en /admin-events (codigo $c; adminEventsEnabled?)"
+        mal "el cambio de mto-users no aparece en /admin-events con el id de mto-users-svc (codigo $c; adminEventsEnabled?)"
       fi
     fi
   fi
@@ -330,8 +343,227 @@ sys.exit(0 if (d.get("messages_count") or len(d.get("messages") or [])) > 0 else
   rm -f "$CUERPO"
 fi
 
+# --- 7. El registro y los accesos por la API (fase 2a) --------------------------------------------
+paso "7. El lector de Keycloak alimenta el registro: las fuentes avanzan y los accesos salen por la API"
+
+# Todo lo de esta fase se mira desde hace diez minutos: el guion puede pasarse varias veces al dia
+# y el registro guarda los accesos 90 dias.
+DESDE="$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+# config.ops (perfil mto-ops) tiene la bandeja, el registro y la administracion; los accesos, con
+# usuario e IP, son del auditor.
+TOKEN_OPS="$(token_de config.ops "$CONTRASENA_LOCAL")"
+
+# Espera hasta que una lista paginada tenga al menos N elementos; deja el cuerpo en CUERPO.
+esperar_total() {
+  local url="$1" token="$2" minimo="$3" tope="${4:-60}" i total
+  for ((i = 0; i < tope; i++)); do
+    if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $token" "$url")" == "200" ]]; then
+      total="$(campo page.totalElements < "$CUERPO")"
+      [[ -n "$total" && "$total" -ge "$minimo" ]] && return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+if [[ -z "$TOKEN_OPS" || -z "${TOKEN_AUDITOR:-}" ]]; then
+  mal "sin token de config.ops o de notificacion.auditor; se omite la fase 2a"
+else
+  CUERPO="$(mktemp)"
+  # a) Las dos marcas del lector avanzan: la cuenta de servicio pide su token y lee /events y /admin-events.
+  LEIDO=0
+  for ((i = 0; i < 45; i++)); do
+    if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/admin/sources")" == "200" ]] && python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+cursores = {c["kind"]: c for c in d.get("cursors", [])}
+sys.exit(0 if all(cursores.get(k, {}).get("lastSuccessAt") and not cursores[k].get("lastError") for k in ("KEYCLOAK_LOGIN", "KEYCLOAK_ADMIN")) else 1)
+' "$CUERPO"; then
+      LEIDO=1; break
+    fi
+    sleep 2
+  done
+  if [[ $LEIDO -eq 1 ]]; then
+    ok "GET /admin/sources: las dos fuentes de Keycloak con una pasada buena y sin error"
+  else
+    mal "las fuentes de Keycloak no dan una pasada buena en 90 s: $(campo cursors < "$CUERPO") (secreto de mto-notification-svc? view-events?)"
+  fi
+
+  # b) El login de config.responsable del paso 4 esta en el registro de accesos.
+  if esperar_total "$API/access?username=config.responsable&outcome=SUCCESS&from=$DESDE" "$TOKEN_AUDITOR" 1 60; then
+    ok "GET /access: el login de config.responsable es un access.login con su IP ($(campo content.0.ipAddress < "$CUERPO"))"
+  else
+    mal "el login de config.responsable no aparece en /access en 2 min (el lector sondea cada 20 s)"
+  fi
+
+  # c) Y los tres fallos de config.lector, cada uno con su linea.
+  if esperar_total "$API/access?username=config.lector&type=access.login.failed&from=$DESDE" "$TOKEN_AUDITOR" 3 60; then
+    ok "GET /access: los tres fallos de config.lector son tres access.login.failed"
+  else
+    mal "no hay tres access.login.failed de config.lector en /access: $(campo page.totalElements < "$CUERPO")"
+  fi
+
+  # d) Los accesos nunca salen por el registro general: category=ACCESS es un 400.
+  c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/activity?category=ACCESS")"
+  [[ "$c" == "400" && "$(campo errorCode < "$CUERPO")" == "VAL-001" ]] \
+    && ok "GET /activity?category=ACCESS: 400 VAL-001, los accesos tienen su endpoint y su permiso" \
+    || mal "GET /activity?category=ACCESS: $c $(campo errorCode < "$CUERPO") (se esperaba 400 VAL-001)"
+  rm -f "$CUERPO"
+fi
+
+# --- 8. La racha: tres fallos son UN aviso -------------------------------------------------------
+paso "8. Tres fallos seguidos son UNA racha y UN aviso en la bandeja y por correo; el cuarto no repite"
+
+if [[ -z "${TOKEN_OPS:-}" || -z "${TOKEN_AUDITOR:-}" ]]; then
+  mal "sin token de config.ops o de notificacion.auditor; se omite"
+else
+  CUERPO="$(mktemp)"
+  RACHA_URL="$API/access?username=config.lector&type=access.login.streak&from=$DESDE"
+  if esperar_total "$RACHA_URL" "$TOKEN_AUDITOR" 1 60; then
+    TOTAL="$(campo page.totalElements < "$CUERPO")"
+    [[ "$TOTAL" == "1" ]] && ok "una sola access.login.streak de config.lector desde hace diez minutos" \
+      || mal "hay $TOTAL rachas de config.lector desde hace diez minutos (se esperaba una)"
+  else
+    mal "no aparece ninguna access.login.streak de config.lector (umbral 3 en 10 min; el detector corre al ingerir el tercer fallo)"
+  fi
+
+  # El aviso, en la bandeja de config.ops (mto-ops es audiencia de la regla access-login-streak).
+  ID_AVISO=""
+  for ((i = 0; i < 15; i++)); do
+    if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/inbox?from=$DESDE&size=50")" == "200" ]]; then
+      ID_AVISO="$(python3 -c '
+import json, sys
+for item in json.load(open(sys.argv[1])).get("content", []):
+    if item.get("ruleKey") == "access-login-streak" and "config.lector" in (item.get("title") or ""):
+        print(item["id"]); break
+' "$CUERPO")"
+      [[ -n "$ID_AVISO" ]] && break
+    fi
+    sleep 2
+  done
+  if [[ -z "$ID_AVISO" ]]; then
+    mal "config.ops no tiene en su bandeja el aviso de la racha de config.lector (regla access-login-streak)"
+  else
+    ok "GET /inbox de config.ops: el aviso de la racha ($ID_AVISO)"
+    c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_OPS" "$API/inbox/$ID_AVISO/read")"
+    [[ "$c" == "200" && "$(campo read < "$CUERPO")" == "True" ]] && ok "POST /inbox/$ID_AVISO/read: leida" \
+      || mal "POST /inbox/$ID_AVISO/read: $c read=$(campo read < "$CUERPO")"
+    c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_LECTOR" "$API/inbox/$ID_AVISO/read" -X POST)"
+    [[ "$c" == "404" ]] && ok "el mismo aviso no es de notificacion.lector: 404 NTF-404 (a quien le toca se resuelve con el token)" \
+      || mal "POST /inbox/$ID_AVISO/read como notificacion.lector: $c (se esperaba 404)"
+
+    # El correo: una entrega por audiencia, expandida a los miembros con direccion, y el mensaje en Mailpit.
+    ENVIADA=0
+    for ((i = 0; i < 30; i++)); do
+      if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/admin/deliveries?notificationId=$ID_AVISO&channel=email&size=50")" == "200" ]] && python3 -c '
+import json, sys
+filas = json.load(open(sys.argv[1])).get("content", [])
+sys.exit(0 if any(f.get("scope") == "RECIPIENT" and f.get("status") == "SENT" and f.get("recipient") == "config.ops@mto.local" for f in filas) else 1)
+' "$CUERPO"; then
+        ENVIADA=1; break
+      fi
+      sleep 2
+    done
+    if [[ $ENVIADA -eq 1 ]]; then
+      ok "GET /admin/deliveries: la entrega a config.ops@mto.local esta SENT (audiencia PROFILE:mto-ops expandida por el directorio)"
+    else
+      mal "la entrega de correo a config.ops@mto.local no llega a SENT en 60 s: $(python3 -c 'import json,sys; print([(f.get("scope"), f.get("recipient") or f.get("audienceKey"), f.get("status"), f.get("lastError")) for f in json.load(open(sys.argv[1])).get("content", [])])' "$CUERPO")"
+    fi
+    LLEGO=0
+    for ((i = 0; i < 15; i++)); do
+      if curl -sS "$MAILPIT/api/v1/search?query=to:config.ops@mto.local%20subject:Racha&limit=5" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+sys.exit(0 if (d.get("messages_count") or len(d.get("messages") or [])) > 0 else 1)
+'; then
+        LLEGO=1; break
+      fi
+      sleep 2
+    done
+    [[ $LLEGO -eq 1 ]] && ok "el correo «Racha de accesos fallidos» para config.ops@mto.local esta en Mailpit" \
+      || mal "el correo de la racha no esta en Mailpit ($MAILPIT; SPRING_MAIL_HOST=mailpit en el servicio?)"
+  fi
+
+  # Un cuarto fallo dentro de la misma ventana no abre otra racha: la clave es la ventana.
+  curl -sS -o /dev/null -X POST "$KC_URL/realms/$KC_REALM/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=mto-frontend -d username=config.lector -d password=incorrecta-4
+  if esperar_total "$API/access?username=config.lector&type=access.login.failed&from=$DESDE" "$TOKEN_AUDITOR" 4 60; then
+    sleep 5
+    CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_AUDITOR" "$RACHA_URL" >/dev/null
+    TOTAL="$(campo page.totalElements < "$CUERPO")"
+    [[ "$TOTAL" == "1" ]] && ok "tras el cuarto fallo sigue habiendo una sola racha" \
+      || mal "tras el cuarto fallo hay $TOTAL rachas (se esperaba una)"
+  else
+    mal "el cuarto fallo de config.lector no llega al registro en 2 min"
+  fi
+  rm -f "$CUERPO"
+fi
+
+# --- 9. Un cambio hecho fuera de la aplicacion ---------------------------------------------------
+paso "9. Un cambio del realm desde la consola es «fuera de la aplicacion»; el de mto-users, no"
+
+TOKEN_KC_ADMIN="$(curl -sS -X POST "$KC_URL/realms/master/protocol/openid-connect/token" \
+  -d grant_type=password -d client_id=admin-cli -d "username=$KC_ADMIN_USER" -d "password=$KC_ADMIN_PASSWORD" 2>/dev/null \
+  | campo access_token | tr -d '\r')"
+if [[ -z "$TOKEN_KC_ADMIN" || -z "${TOKEN_OPS:-}" ]]; then
+  mal "sin token del administrador de Keycloak (KC_BOOTSTRAP_ADMIN_*) o de config.ops; se omite"
+else
+  CUERPO="$(mktemp)"
+  if [[ -z "${ID_LECTOR:-}" ]]; then
+    CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_KC_ADMIN" "$KC_URL/admin/realms/$KC_REALM/users?username=config.lector&exact=true" >/dev/null
+    ID_LECTOR="$(campo 0.id < "$CUERPO")"
+  fi
+  # Lo que haria alguien en la consola o con kcadm: un cambio que no cambia nada, con admin-cli.
+  c="$(codigo -X PUT -H "Authorization: Bearer $TOKEN_KC_ADMIN" -H "Content-Type: application/json" \
+    -d '{"enabled": true}' "$KC_URL/admin/realms/$KC_REALM/users/$ID_LECTOR")"
+  if [[ "$c" != "204" ]]; then
+    mal "PUT /admin/realms/$KC_REALM/users/$ID_LECTOR con admin-cli: $c"
+  else
+    ACTIVIDAD_URL="$API/activity?category=USERS&type=users.admin.user-updated&subjectId=$ID_LECTOR&from=$DESDE&size=50"
+    VISTO=0
+    for ((i = 0; i < 45; i++)); do
+      if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$ACTIVIDAD_URL")" == "200" ]] && python3 -c '
+import json, sys
+filas = json.load(open(sys.argv[1])).get("content", [])
+sys.exit(0 if any(f.get("sourceService") == "keycloak-admin" and (f.get("actor") or {}).get("kind") == "PERSON" for f in filas) else 1)
+' "$CUERPO"; then
+        VISTO=1; break
+      fi
+      sleep 2
+    done
+    if [[ $VISTO -eq 1 ]]; then
+      ok "GET /activity: el cambio de la consola es users.admin.user-updated con actor PERSON (clientId admin-cli)"
+      if python3 -c '
+import json, sys
+filas = json.load(open(sys.argv[1])).get("content", [])
+sys.exit(0 if any((f.get("actor") or {}).get("kind") == "SERVICE" and (f.get("actor") or {}).get("username") == "service-account-mto-users-svc" for f in filas) else 1)
+' "$CUERPO"; then
+        ok "y el del paso 5, hecho por mto-users, llega con actor SERVICE service-account-mto-users-svc"
+      else
+        mal "el cambio hecho por mto-users (paso 5) no aparece con actor SERVICE en /activity"
+      fi
+    else
+      mal "el cambio de la consola no aparece en /activity como users.admin.user-updated en 90 s"
+    fi
+
+    AVISO=0
+    for ((i = 0; i < 15; i++)); do
+      if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/inbox?from=$DESDE&size=50")" == "200" ]] && python3 -c '
+import json, sys
+sys.exit(0 if any(i.get("ruleKey") == "users-change-outside-application" for i in json.load(open(sys.argv[1])).get("content", [])) else 1)
+' "$CUERPO"; then
+        AVISO=1; break
+      fi
+      sleep 2
+    done
+    [[ $AVISO -eq 1 ]] && ok "config.ops tiene el aviso «Cambio en el realm fuera de la aplicacion» (regla users-change-outside-application)" \
+      || mal "no hay aviso users-change-outside-application en la bandeja de config.ops"
+  fi
+  rm -f "$CUERPO"
+fi
+
 # --- Resumen ---------------------------------------------------------------------------------------
 echo
 echo "$BIEN comprobaciones bien, $MAL mal."
-echo "Pasos de fases posteriores (bandeja, racha, importacion resumida, orden urgente, bajo minimo, cambio fuera de la aplicacion): se anaden con su fase."
+echo "Pasos de fases posteriores (importacion resumida, cambio desde el backoffice, orden urgente, bajo minimo): se anaden con su fase."
 [[ $MAL -eq 0 ]]

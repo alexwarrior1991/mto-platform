@@ -345,9 +345,14 @@ Con el stack levantado, `scripts/smoke_notification.sh` comprueba de punta a pun
 tokens del *password grant* local, lo que `mto-notification` necesita del resto: que responde y que
 el gateway le enruta, que el token de una persona lleva su audiencia y sus permisos (y que un permiso
 no abre el recurso de otro), que Keycloak registra un login y sus fallos y que `mto-notification-svc`
-puede leerlos, y que el correo del realm llega a Mailpit. Cada fase del servicio anade sus pasos
-(la racha de fallos, la importacion resumida, la orden urgente, el material bajo minimo, el cambio
-hecho fuera de la aplicacion); el guion dice cuales estan ya y cuales no.
+puede leerlos, y que el correo del realm llega a Mailpit. Con la fase 2a comprueba ademas el
+servicio entero: las dos fuentes de Keycloak avanzando (`/admin/sources`), el login y los fallos en
+`/access` (y nunca en `/activity`), la racha de tres fallos como **un** `access.login.streak` y **un**
+aviso en la bandeja de `config.ops` y en Mailpit (con la entrega expandida por el directorio), que un
+cuarto fallo no repite, y que un cambio del realm hecho con `admin-cli` llega como «fuera de la
+aplicacion» mientras el hecho por `mto-users` llega con su cuenta de servicio. Cada fase anade sus
+pasos (la importacion resumida, el cambio desde el backoffice, la orden urgente, el material bajo
+minimo); el guion dice cuales estan ya y cuales no.
 
 ## Parar
 

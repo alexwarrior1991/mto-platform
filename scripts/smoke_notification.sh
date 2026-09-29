@@ -22,9 +22,9 @@
 #      que lo abre, la cadena deja pasar (404 mientras el recurso no existe: esta es la fase 1).
 #   4. Keycloak registra los accesos y mto-notification-svc puede leerlos con view-events: un login
 #      y tres fallos seguidos de una persona aparecen en /admin/realms/mto/events.
-#   5. Los eventos de administracion tambien: un cambio hecho por mto-users llega con el clientId
-#      de su cuenta de servicio, que es lo que distingue un cambio de la aplicacion de uno hecho
-#      en la consola.
+#   5. Los eventos de administracion tambien: un cambio hecho por mto-users llega con el id interno
+#      del cliente de su cuenta de servicio (authDetails.clientId es un UUID, no el clientId), que
+#      es lo que distingue un cambio de la aplicacion de uno hecho en la consola.
 #   6. El correo del realm llega a Mailpit: el correo de acciones de mto-users, que sin SMTP
 #      fallaba con un 502, aparece en el buzon.
 #
@@ -286,16 +286,22 @@ else
       mal "PATCH /api/users/$ID_LECTOR/enabled: $c"
     else
       sleep 1
+      # authDetails.clientId trae el id INTERNO del cliente (un UUID), no su clientId: se resuelve
+      # con view-clients, que es lo mismo que hace mto-notification al leerlo.
+      ID_USERS_SVC="$(curl -sS -H "Authorization: Bearer $TOKEN_SVC" "$KC_URL/admin/realms/$KC_REALM/clients?clientId=mto-users-svc" 2>/dev/null \
+        | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d[0]["id"] if d else "", end="")')"
       c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_SVC" \
         "$KC_URL/admin/realms/$KC_REALM/admin-events?resourceTypes=USER&operationTypes=UPDATE&max=20")"
-      if [[ "$c" == "200" ]] && python3 -c '
+      if [[ -z "$ID_USERS_SVC" ]]; then
+        mal "mto-notification-svc no puede leer el cliente mto-users-svc (falta view-clients?)"
+      elif [[ "$c" == "200" ]] && python3 -c '
 import json, sys
 eventos = json.load(open(sys.argv[1]))
-sys.exit(0 if any(e.get("resourcePath") == "users/" + sys.argv[2] and (e.get("authDetails") or {}).get("clientId") == "mto-users-svc" for e in eventos) else 1)
-' "$CUERPO" "$ID_LECTOR"; then
-        ok "el UPDATE de users/$ID_LECTOR esta en /admin-events con authDetails.clientId = mto-users-svc"
+sys.exit(0 if any(e.get("resourcePath") == "users/" + sys.argv[2] and (e.get("authDetails") or {}).get("clientId") == sys.argv[3] for e in eventos) else 1)
+' "$CUERPO" "$ID_LECTOR" "$ID_USERS_SVC"; then
+        ok "el UPDATE de users/$ID_LECTOR esta en /admin-events con authDetails.clientId = id interno de mto-users-svc"
       else
-        mal "el cambio de mto-users no aparece en /admin-events (codigo $c; adminEventsEnabled?)"
+        mal "el cambio de mto-users no aparece en /admin-events con el id de mto-users-svc (codigo $c; adminEventsEnabled?)"
       fi
     fi
   fi

@@ -1,4 +1,4 @@
--- Las tres bases del dominio en un unico servidor.
+-- Las cuatro bases del dominio en un unico servidor.
 --
 -- El contenedor de PostgreSQL ejecuta los ficheros de /docker-entrypoint-initdb.d SOLO en la
 -- primera inicializacion, cuando el directorio de datos esta vacio. Si se cambia algo de aqui
@@ -23,6 +23,9 @@
 \getenv maintenance_db      MTO_MAINTENANCE_DB
 \getenv maintenance_user    MTO_MAINTENANCE_USER
 \getenv maintenance_pass    MTO_MAINTENANCE_PASSWORD
+\getenv notification_db     MTO_NOTIFICATION_DB
+\getenv notification_user   MTO_NOTIFICATION_USER
+\getenv notification_pass   MTO_NOTIFICATION_PASSWORD
 
 -- mto-configuration ------------------------------------------------------------------------------
 
@@ -54,12 +57,27 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'maintenance_db', :'maintenance_us
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'maintenance_db')
 \gexec
 
+-- mto-notification -------------------------------------------------------------------------------
+--
+-- Anadida despues de las otras tres. Sobre un volumen ya inicializado este fichero no vuelve a
+-- ejecutarse solo; es reejecutable, asi que basta con pasarselo a psql dentro del contenedor una
+-- vez recreado 'postgres' con las variables nuevas (vease README.md, "Una base nueva en un stack
+-- ya levantado").
+
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'notification_user', :'notification_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'notification_user')
+\gexec
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'notification_db', :'notification_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'notification_db')
+\gexec
+
 -- El esquema de mto-configuration ------------------------------------------------------------
 --
 -- Flyway esta configurado con default-schema y schemas y sabe crearlo, pero necesita privilegios
 -- sobre la base entera para ello. Se crea aqui con el dueño correcto para no tener que darselos.
--- mto-stock y mto-maintenance usan el esquema public de su propia base y no necesitan nada
--- equivalente.
+-- mto-stock, mto-maintenance y mto-notification usan el esquema public de su propia base y no
+-- necesitan nada equivalente.
 
 \connect :configuration_db
 

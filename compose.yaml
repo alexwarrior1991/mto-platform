@@ -9,13 +9,14 @@
 #   docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 #   docker compose --profile configuration --profile gateway up -d  # dos de seis
 #   docker compose --profile backoffice --profile gateway up -d      # la web y el gateway al que llama
+#   docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
 # arrancarlo desde el IDE contra esta misma infraestructura. Por eso Keycloak y el colector OTLP
 # se alcanzan por el HOST con un nombre estable (auth.mto.local / otel.mto.local) y no por el
 # nombre del servicio de compose: la URL es la misma se ejecute el servicio dentro o fuera de aqui.
 #
-# Un solo broker para las dos aplicaciones. Cuando cada repositorio levantaba el suyo,
+# Un solo broker para todas las aplicaciones. Cuando cada repositorio levantaba el suyo,
 # mto-configuration publicaba en uno y mto-stock escuchaba en otro: los mensajes no llegaban y
 # nada daba error. Es el motivo principal de que exista este fichero.
 name: mto-platform
@@ -26,7 +27,7 @@ services:
   # Infraestructura. Sin 'profiles': arranca siempre.
   # ---------------------------------------------------------------------------------------------
 
-  # Un unico servidor para las tres bases de datos. Los usuarios y las bases los crea
+  # Un unico servidor para las cuatro bases de datos. Los usuarios y las bases los crea
   # postgres/init/01-databases.sql, que el contenedor ejecuta en la PRIMERA inicializacion.
   postgres:
     image: postgres:17-alpine
@@ -48,6 +49,9 @@ services:
       MTO_MAINTENANCE_DB: ${MTO_MAINTENANCE_DB:-mto_maintenance}
       MTO_MAINTENANCE_USER: ${MTO_MAINTENANCE_USER:-mto_maintenance_user}
       MTO_MAINTENANCE_PASSWORD: ${MTO_MAINTENANCE_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_NOTIFICATION_DB: ${MTO_NOTIFICATION_DB:-mto_notification}
+      MTO_NOTIFICATION_USER: ${MTO_NOTIFICATION_USER:-mto_notification_user}
+      MTO_NOTIFICATION_PASSWORD: ${MTO_NOTIFICATION_PASSWORD:?falta en .env, copiese .env.example}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -197,6 +201,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # Todo el correo del entorno local acaba aqui y se lee en http://localhost:8025; nada sale fuera.
+  # Lo usan mto-notification (los avisos urgentes) y el propio Keycloak (el correo de acciones:
+  # contrasena temporal, verificar email), cuyo smtpServer apunta a este servicio en
+  # mto-realm-local.json. Sin perfil, como el resto de la infraestructura: sin SMTP el correo de
+  # acciones de mto-users fallaba con un 502 y nada avisaba.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: mto-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   # ---------------------------------------------------------------------------------------------
   # Aplicaciones. Cada una con su perfil, ninguna arranca sin pedirla.
@@ -362,6 +388,14 @@ services:
       KEYCLOAK_REALM: mto
       KEYCLOAK_ADMIN_CLIENT_ID: mto-users-svc
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${MTO_USERS_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      # El broker, para publicar quien hizo cada cambio de usuarios hacia mto-notification: en los
+      # eventos de administracion de Keycloak el autor es la cuenta de servicio, no la persona.
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+      MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
       APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
@@ -371,7 +405,68 @@ services:
     ports:
       - "${MTO_USERS_PORT:-8084}:8080"
     depends_on:
+      rabbitmq: {condition: service_healthy}
       keycloak: {condition: service_healthy}
+
+  # Registro de actividad y notificaciones. Consume los eventos de los demas servicios por el
+  # broker, lee los accesos y las mutaciones del realm por la Admin API de Keycloak con la cuenta
+  # de servicio mto-notification-svc (sus roles de realm-management y los eventos del realm los
+  # pone apply-partials.sh) y manda el correo urgente a Mailpit.
+  #
+  # Como el backoffice, lleva 'build' ademas de 'image': hasta que su CI publique la imagen en
+  # GHCR, compose la construye desde el checkout hermano (../mto-notification).
+  notification:
+    image: ghcr.io/alexwarrior1991/mto-notification:${MTO_NOTIFICATION_TAG:-latest}
+    build:
+      context: ../mto-notification
+    container_name: mto-notification
+    profiles: [all, notification]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_NOTIFICATION_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_NOTIFICATION_DB:-mto_notification}
+      DATABASE_USERNAME: ${MTO_NOTIFICATION_USER:-mto_notification_user}
+      DATABASE_PASSWORD: ${MTO_NOTIFICATION_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+      APP_RABBITMQ_ENABLED: "true"
+      SPRING_RABBITMQ_LISTENER_OBSERVATION_ENABLED: "true"
+      MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
+      MESSAGING_SIGNATURE_MODE: ${MESSAGING_SIGNATURE_MODE:-OPTIONAL}
+      # La Admin API de Keycloak, para leer los eventos; el mismo nombre que emite los tokens.
+      KEYCLOAK_AUTH_SERVER_URL: ${KEYCLOAK_AUTH_SERVER_URL:-http://auth.mto.local:8082}
+      KEYCLOAK_REALM: mto
+      KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
+      KEYCLOAK_SERVICE_CLIENT_ID: mto-notification-svc
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_NOTIFICATION_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      # El correo, a Mailpit por su nombre de servicio.
+      SPRING_MAIL_HOST: mailpit
+      SPRING_MAIL_PORT: 1025
+      APP_NOTIFICATION_LINK_BASE_URL: ${APP_NOTIFICATION_LINK_BASE_URL:-http://localhost:8085}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-notification-api
+      KEYCLOAK_AUDIENCE: mto-notification-api
+      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
+      MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_NOTIFICATION_PORT:-8086}:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+      mailpit: {condition: service_healthy}
 
   # El borde: aqui nace la traza distribuida y aqui se autentica. No persiste nada, asi que no
   # depende de la infraestructura de datos.
@@ -391,11 +486,13 @@ services:
       MTO_STOCK_URL: ${MTO_STOCK_URL:-http://stock:8080}
       MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
       MTO_USERS_URL: ${MTO_USERS_URL:-http://users:8080}
+      MTO_NOTIFICATION_URL: ${MTO_NOTIFICATION_URL:-http://notification:8080}
       KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:5173}
     # host.docker.internal no existe en Linux salvo que se declare; hace falta si se apunta
-    # MTO_CONFIGURATION_URL, MTO_STOCK_URL, MTO_MAINTENANCE_URL o MTO_USERS_URL a un servicio arrancado desde el IDE.
+    # MTO_CONFIGURATION_URL, MTO_STOCK_URL, MTO_MAINTENANCE_URL, MTO_USERS_URL o MTO_NOTIFICATION_URL a un
+    # servicio arrancado desde el IDE.
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "auth.mto.local:host-gateway"

@@ -6,6 +6,45 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "sslRequired": "none",
+  "eventsEnabled": true,
+  "eventsExpiration": 604800,
+  "eventsListeners": [
+    "jboss-logging"
+  ],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "LOGOUT_ERROR",
+    "UPDATE_PASSWORD",
+    "RESET_PASSWORD",
+    "SEND_RESET_PASSWORD",
+    "EXECUTE_ACTIONS",
+    "EXECUTE_ACTION_TOKEN",
+    "UPDATE_CREDENTIAL",
+    "REMOVE_CREDENTIAL",
+    "UPDATE_TOTP",
+    "REMOVE_TOTP",
+    "USER_DISABLED_BY_TEMPORARY_LOCKOUT",
+    "USER_DISABLED_BY_PERMANENT_LOCKOUT",
+    "IMPERSONATE",
+    "UPDATE_PROFILE",
+    "UPDATE_EMAIL"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "attributes": {
+    "adminEventsExpiration": "604800"
+  },
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "keycloak@mto.local",
+    "fromDisplayName": "MTO (local)",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
   "clients": [
     {
       "clientId": "mto-frontend",
@@ -72,6 +111,16 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "mto-users-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audiencia-mto-notification-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-notification-api",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprueba que las piezas del realm 'mto' repartidas por los siete repositorios encajan.
+"""Comprueba que las piezas del realm 'mto' repartidas por los ocho repositorios encajan.
 
 Los ficheros de keycloak/ no los compila nadie: un error en ellos no se descubre hasta que alguien
 levanta el stack o, peor, hasta que se importa en un entorno. Y desde que el realm se ensambla a
@@ -12,7 +12,7 @@ repositorio. Solo libreria estandar: este es un repositorio de composes y no se 
 Uso:
     python3 scripts/check_realm_consistency.py [--repos DIR]
 
-DIR es el directorio que contiene los siete repositorios como hermanos (por defecto, el padre de
+DIR es el directorio que contiene los ocho repositorios como hermanos (por defecto, el padre de
 este repositorio).
 """
 
@@ -22,7 +22,35 @@ import sys
 from pathlib import Path
 
 # Los clientes de API del dominio. mto-frontend tiene que poder emitir tokens dirigidos a todos.
-CLIENTES_API = ("mto-configuration-api", "mto-stock-api", "mto-gateway-api", "mto-maintenance-api", "mto-users-api")
+CLIENTES_API = (
+    "mto-configuration-api",
+    "mto-stock-api",
+    "mto-gateway-api",
+    "mto-maintenance-api",
+    "mto-users-api",
+    "mto-notification-api",
+)
+
+# Los eventos de acceso que mto-notification necesita leer del realm. Sin LOGIN y LOGIN_ERROR no
+# hay registro de accesos ni deteccion de rachas de fallos; sin LOGOUT, la mitad de la sesion.
+TIPOS_DE_EVENTO_IMPRESCINDIBLES = {"LOGIN", "LOGIN_ERROR", "LOGOUT"}
+
+# Ruido de maquina que no se activa: cada client_credentials de una cuenta de servicio, cada
+# refresco y cada introspeccion generarian un evento que el lector tendria que descartar, y
+# llenarian la tabla de eventos de Keycloak antes de que caducasen los que importan.
+TIPOS_DE_EVENTO_RUIDOSOS = {"CLIENT_LOGIN", "CODE_TO_TOKEN", "REFRESH_TOKEN", "INTROSPECT_TOKEN", "USER_INFO_REQUEST"}
+
+# El SMTP del realm local: Mailpit, el buzon del compose. Solo en local: en lo que se despliega el
+# correo se configura en la consola, con sus credenciales, y el fichero base no lleva ninguna.
+SMTP_LOCAL = {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "keycloak@mto.local",
+    "fromDisplayName": "MTO (local)",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false",
+}
 
 # Lo unico en lo que el realm local puede apartarse del base. Cualquier otra diferencia significa
 # que alguien toco uno y no el otro, y el stack local estaria probando algo distinto de lo que se
@@ -32,6 +60,9 @@ DELTAS_LOCALES_PERMITIDOS = {
     # acceso.
     "sslRequired": ("external", "none"),
     "displayName": ("MTO", "MTO (local)"),
+    # El correo de acciones de Keycloak (contrasena temporal, verificar email) y los avisos
+    # urgentes de mto-notification acaban en Mailpit; nada sale del entorno local.
+    "smtpServer": (None, SMTP_LOCAL),
 }
 
 # Lo mismo, pero DENTRO de un cliente: {(clientId, campo): (valor en el base, valor en el local)}.
@@ -239,6 +270,67 @@ def el_base_no_trae_usuarios_ni_secretos(base, problemas):
             )
 
 
+def los_eventos_del_realm_estan_activados(base, problemas):
+    """mto-notification lee los accesos y las mutaciones del realm por la Admin API de Keycloak.
+
+    Los eventos vienen apagados de fabrica y, apagados, la API responde una lista vacia: el
+    registro de accesos se quedaria sin nada y ninguna pieza fallaria. Se exige lo que el lector
+    necesita (eventos de acceso y de administracion activados, con caducidad, con los tipos
+    imprescindibles y sin los ruidosos) en mto-realm.json; el local lo lleva igual porque la
+    comparacion de arriba no admite diferencias en estas claves.
+
+    'adminEventsDetailsEnabled' va a true a proposito: la representacion de un evento de
+    administracion es lo que dice QUE cambio (los nombres de los roles de un role-mapping, por
+    ejemplo), y Keycloak la pasa por StripSecretsUtils antes de guardarla, asi que nunca lleva
+    una credencial. La caducidad de esos eventos no esta en events/config sino en el atributo de
+    realm adminEventsExpiration.
+    """
+    for clave in ("eventsEnabled", "adminEventsEnabled", "adminEventsDetailsEnabled"):
+        if base.get(clave) is not True:
+            problemas.error(
+                "los eventos del realm no estan activados",
+                f"  mto-realm.json tiene '{clave}': {base.get(clave)!r}. Sin el, mto-notification lee\n"
+                f"  una lista vacia y nada avisa.",
+            )
+
+    caducidad = base.get("eventsExpiration")
+    if not isinstance(caducidad, int) or caducidad <= 0:
+        problemas.error(
+            "los eventos de acceso no caducan",
+            f"  mto-realm.json tiene 'eventsExpiration': {caducidad!r}. Sin caducidad la tabla de\n"
+            f"  eventos de Keycloak crece sin limite; mto-notification es el archivo, no Keycloak.",
+        )
+    caducidad_admin = (base.get("attributes") or {}).get("adminEventsExpiration")
+    if not (isinstance(caducidad_admin, str) and caducidad_admin.isdigit() and int(caducidad_admin) > 0):
+        problemas.error(
+            "los eventos de administracion no caducan",
+            f"  mto-realm.json tiene 'attributes.adminEventsExpiration': {caducidad_admin!r}.\n"
+            f"  Es un atributo de realm (texto con segundos), no una clave de events/config.",
+        )
+
+    tipos = base.get("enabledEventTypes")
+    if not isinstance(tipos, list) or not tipos:
+        problemas.error(
+            "el realm no declara que eventos de acceso registra",
+            "  Sin 'enabledEventTypes' Keycloak registra TODOS los tipos, incluidos los de maquina\n"
+            "  (CLIENT_LOGIN, REFRESH_TOKEN...), que son la mayoria y no dicen nada de una persona.",
+        )
+        return
+    faltan = sorted(TIPOS_DE_EVENTO_IMPRESCINDIBLES - set(tipos))
+    if faltan:
+        problemas.error(
+            "faltan tipos de evento que mto-notification necesita",
+            f"  'enabledEventTypes' no incluye {faltan}.",
+        )
+    ruidosos = sorted(TIPOS_DE_EVENTO_RUIDOSOS & set(tipos))
+    if ruidosos:
+        problemas.error(
+            "el realm registra eventos de maquina",
+            f"  'enabledEventTypes' incluye {ruidosos}: un evento por cada token de una cuenta de\n"
+            f"  servicio o cada refresco, que el lector descarta y que llenan la tabla de Keycloak.",
+        )
+
+
 def el_base_no_abre_el_password_grant(base, problemas):
     """En lo que se despliega, ningun cliente pide la contrasena del usuario.
 
@@ -316,10 +408,10 @@ def ningun_cliente_se_declara_dos_veces_distinto(orden, problemas):
 
 
 def el_perfil_de_explotacion_cubre_los_tres(orden, cruzado, problemas):
-    """mto-ops solo lo define mto-ops-cross-service.json, y tiene que cubrir a los tres.
+    """mto-ops solo lo define mto-ops-cross-service.json, y tiene que cubrir a todos los servicios.
 
-    Los permisos son roles de CLIENTE y cada aplicacion lee los del suyo: 'ops-metrics' existe tres
-    veces, una por servicio. Un mto-ops al que le falte uno recibe un 403 en el Actuator de ese
+    Los permisos son roles de CLIENTE y cada aplicacion lee los del suyo: 'ops-metrics' existe una
+    vez por servicio. Un mto-ops al que le falte uno recibe un 403 en el Actuator de ese
     servicio. Ademas una parcial reescribe el rol entero, asi que este fichero tiene que repetir
     todo lo que el perfil debe tener: lo que no este aqui, no esta.
     """
@@ -394,7 +486,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los siete repositorios como hermanos.",
+        help="Directorio que contiene los ocho repositorios como hermanos.",
     )
     args = parser.parse_args()
 
@@ -408,6 +500,8 @@ def main():
     # El mismo orden en el que apply-partials.sh los aplica. Si cambia alli, cambia aqui.
     orden = [
         ("mto-realm-local.json (--import-realm)", local),
+        # La primera: los perfiles de los demas servicios nombran los permisos de mto-notification-api.
+        ("mto-notification-partial-import.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-partial-import.json")),
         ("mto-configuration-partial-import.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-partial-import.json")),
         ("mto-stock-partial-import.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json")),
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
@@ -415,6 +509,7 @@ def main():
         ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
         ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
+        ("mto-notification-dev.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json")),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
         ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
@@ -430,6 +525,7 @@ def main():
     base_y_local_no_se_separan(base, local, problemas)
     el_base_no_trae_usuarios_ni_secretos(base, problemas)
     el_base_no_abre_el_password_grant(base, problemas)
+    los_eventos_del_realm_estan_activados(base, problemas)
     todo_cliente_de_login_emite_audiencia_para_los_api(base, orden, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)

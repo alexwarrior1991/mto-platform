@@ -8,14 +8,15 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los cinco, asi que va DESPUES de las parciales que los crean.
+# mto-ops-cross-service.json nombra los seis, asi que va DESPUES de las parciales que los crean; y la
+# de mto-notification va la PRIMERA, porque los perfiles de los demas nombraran sus permisos.
 # Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
 #
 # Uso:
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los seis repositorios como hermanos en el mismo directorio.
+# Espera los siete repositorios de servicio como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -37,13 +38,17 @@ esac
 
 # Primero las parciales que CREAN los clientes; despues las que los nombran.
 FICHEROS=(
+  # La primera: notification-inbox y los demas permisos de mto-notification-api los nombraran los
+  # perfiles de todos los servicios (cada persona tiene su bandeja), y un compuesto solo puede
+  # nombrar roles de un cliente que ya exista.
+  "$HERMANOS/mto-notification/keycloak/mto-notification-partial-import.json"
   "$HERMANOS/mto-configuration/keycloak/mto-configuration-partial-import.json"
   "$HERMANOS/mto-stock/keycloak/mto-stock-partial-import.json"
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
   # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
-  # audience mapper hacia los cinco API: no declara roles, comprueba los de mto-configuration-api.
+  # audience mapper hacia los seis API: no declara roles, comprueba los de mto-configuration-api.
   "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
@@ -53,6 +58,7 @@ FICHEROS=(
 DESARROLLO=()
 if [[ $CON_USUARIOS -eq 1 ]]; then
   DESARROLLO=(
+    "$HERMANOS/mto-notification/keycloak/mto-notification-dev.json"
     "$HERMANOS/mto-configuration/keycloak/mto-configuration-dev.json"
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
@@ -72,7 +78,7 @@ for fichero in "${FICHEROS[@]}" ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los siete repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los ocho repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 
@@ -291,6 +297,75 @@ conceder_roles_de_servicio mto-maintenance-svc mto-stock-api stock-read stock-wr
 # role-mappings), ver y buscar clientes y leer los roles de realm (los perfiles). Ni manage-realm ni
 # manage-clients ni realm-admin: la API asigna roles, no los crea.
 conceder_roles_de_servicio mto-users-svc realm-management view-users query-users manage-users view-clients query-clients view-realm
+
+# mto-notification lee los eventos de acceso y de administracion del realm por la Admin API y
+# resuelve las direcciones de correo de una audiencia: view-events y los cinco roles de solo
+# lectura del directorio. Nunca manage-events (ni reconfigura ni borra eventos) ni manage-users:
+# es un lector.
+conceder_roles_de_servicio mto-notification-svc realm-management view-events view-users query-users view-clients query-clients view-realm
+
+# Los eventos del realm no los trae ninguna parcial: son ajustes del realm, no de un cliente, y
+# viven en mto-realm.json (el local los lleva iguales; scripts/check_realm_consistency.py lo
+# exige). El --import-realm del contenedor ya los aplica al crear el realm, pero solo entonces: un
+# Keycloak que ya tenia el realm de antes de que existieran los eventos, o un entorno desplegado
+# donde el realm se importo una vez, se quedaria sin ellos y mto-notification leeria una lista
+# vacia sin que nada fallara. Por la API es reejecutable: un PUT con los mismos valores no cambia
+# nada.
+configurar_eventos_del_realm() {
+  local base="$AQUI/mto-realm.json" local_="$AQUI/mto-realm-local.json"
+  echo "Configurando los eventos del realm desde $(basename "$base")"
+
+  local eventos
+  eventos="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+claves = ("eventsEnabled", "eventsExpiration", "eventsListeners", "enabledEventTypes",
+          "adminEventsEnabled", "adminEventsDetailsEnabled")
+faltan = [c for c in claves if c not in d]
+if faltan:
+    sys.exit("mto-realm.json no declara " + ", ".join(faltan))
+json.dump({c: d[c] for c in claves}, sys.stdout)
+' "$(ruta_nativa "$base")")"
+
+  curl -sS --fail-with-body -X PUT \
+    "$KC_URL/admin/realms/$KC_REALM/events/config" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    --data-binary "$eventos"
+
+  # La caducidad de los eventos de administracion no esta en events/config: es el atributo de
+  # realm adminEventsExpiration. Y el SMTP, que solo el realm local declara (Mailpit), va en el
+  # mismo PUT cuando se aplican los usuarios de desarrollo; con --no-dev-users no se toca, porque
+  # en un entorno desplegado el correo se configura en la consola. Se lee el realm entero y se
+  # devuelve con lo cambiado, como con los secretos: un PUT parcial funciona por casualidad.
+  local smtp=sin-smtp
+  if [[ $CON_USUARIOS -eq 1 ]]; then
+    smtp=con-smtp
+  fi
+  local representacion
+  representacion="$(curl -sS --fail-with-body "$KC_URL/admin/realms/$KC_REALM" \
+    -H "Authorization: Bearer $TOKEN" \
+    | python3 -c '
+import json, sys
+realm = json.load(sys.stdin)
+base = json.load(open(sys.argv[1], encoding="utf-8"))
+atributos = realm.get("attributes") or {}
+atributos.update(base.get("attributes") or {})
+realm["attributes"] = atributos
+if sys.argv[2] == "con-smtp":
+    smtp = json.load(open(sys.argv[3], encoding="utf-8")).get("smtpServer")
+    if smtp:
+        realm["smtpServer"] = smtp
+json.dump(realm, sys.stdout)
+' "$(ruta_nativa "$base")" "$smtp" "$(ruta_nativa "$local_")")"
+
+  curl -sS --fail-with-body -X PUT \
+    "$KC_URL/admin/realms/$KC_REALM" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    --data-binary "$representacion"
+  echo "    hecho"
+}
+
+configurar_eventos_del_realm
 
 echo
 echo "Realm '$KC_REALM' ensamblado."

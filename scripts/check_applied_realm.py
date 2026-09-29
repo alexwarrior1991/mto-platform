@@ -12,7 +12,9 @@ Se ejecuta despues de keycloak/apply-partials.sh, contra el Keycloak del compose
 - que cada cliente declarado en una parcial esta en el realm con lo que la parcial dice de el:
   flags, URIs, atributos y protocol mappers;
 - que cada secreto de un fichero de desarrollo es el que tiene el cliente;
-- que las cuentas de servicio tienen los roles que apply-partials.sh les concede.
+- que las cuentas de servicio tienen los roles que apply-partials.sh les concede;
+- que los eventos del realm quedan como los declara mto-realm.json (events/config y la caducidad de
+  los de administracion), y el SMTP como el realm local: es lo que mto-notification lee.
 
 Solo libreria estandar, como check_realm_consistency.py.
 
@@ -59,13 +61,28 @@ ROLES_DE_SERVICIO = {
         "realm-management",
         {"view-users", "query-users", "manage-users", "view-clients", "query-clients", "view-realm"},
     ),
+    "mto-notification-svc": (
+        "realm-management",
+        {"view-events", "view-users", "query-users", "view-clients", "query-clients", "view-realm"},
+    ),
 }
+
+# Lo que apply-partials.sh manda a events/config, tal cual lo declara mto-realm.json.
+CAMPOS_DE_EVENTOS = (
+    "eventsEnabled",
+    "eventsExpiration",
+    "eventsListeners",
+    "enabledEventTypes",
+    "adminEventsEnabled",
+    "adminEventsDetailsEnabled",
+)
 
 
 def ficheros(raiz):
     """Las parciales y los ficheros de desarrollo, en el orden de apply-partials.sh."""
     plataforma = raiz / "mto-platform" / "keycloak"
     parciales = [
+        raiz / "mto-notification" / "keycloak" / "mto-notification-partial-import.json",
         raiz / "mto-configuration" / "keycloak" / "mto-configuration-partial-import.json",
         raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json",
         raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json",
@@ -75,6 +92,7 @@ def ficheros(raiz):
         plataforma / "mto-ops-cross-service.json",
     ]
     desarrollo = [
+        raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json",
         raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json",
         raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json",
         raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json",
@@ -202,17 +220,61 @@ def las_cuentas_de_servicio_tienen_sus_roles(keycloak, problemas):
             )
 
 
+def los_eventos_del_realm_quedan_como_los_declara_el_base(keycloak, base, local, problemas):
+    """Lo que mto-notification va a leer: events/config, la caducidad de los admin events y el SMTP.
+
+    El --import-realm los aplica al crear el realm y apply-partials.sh los vuelve a aplicar por la
+    API; si cualquiera de los dos caminos se dejara algo, el lector recibiria una lista vacia y
+    nadie lo veria.
+    """
+    real = keycloak.get("/events/config")
+    for campo in CAMPOS_DE_EVENTOS:
+        esperado, tiene = base.get(campo), real.get(campo)
+        if isinstance(esperado, list):
+            esperado, tiene = set(esperado), set(tiene or [])
+        if esperado != tiene:
+            problemas.error(
+                "los eventos del realm no quedan como los declara mto-realm.json",
+                f"  events/config.{campo}: el fichero dice {base.get(campo)!r} y el realm tiene {real.get(campo)!r}.",
+            )
+
+    realm = keycloak.get("")
+    atributos = realm.get("attributes") or {}
+    for clave, valor in (base.get("attributes") or {}).items():
+        if atributos.get(clave) != valor:
+            problemas.error(
+                "un atributo del realm no queda como lo declara mto-realm.json",
+                f"  attributes.{clave}: el fichero dice {valor!r} y el realm tiene {atributos.get(clave)!r}.",
+            )
+
+    smtp = local.get("smtpServer")
+    if smtp:
+        real_smtp = realm.get("smtpServer") or {}
+        # Keycloak enmascara la contrasena al leer; el realm local no declara ninguna.
+        distintos = {clave: (valor, real_smtp.get(clave)) for clave, valor in smtp.items() if clave != "password" and real_smtp.get(clave) != valor}
+        if distintos:
+            problemas.error(
+                "el SMTP del realm no es el de mto-realm-local.json",
+                "\n".join(f"  smtpServer.{clave}: el fichero dice {v[0]!r} y el realm tiene {v[1]!r}" for clave, v in distintos.items())
+                + "\n  Sin el, el correo de acciones de mto-users y los avisos de mto-notification no llegan a Mailpit.",
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los siete repositorios como hermanos.",
+        help="Directorio que contiene los ocho repositorios como hermanos.",
     )
     args = parser.parse_args()
 
-    parciales, desarrollo = ficheros(args.repos.resolve())
+    raiz = args.repos.resolve()
+    plataforma = raiz / "mto-platform" / "keycloak"
+    base = leer(plataforma / "mto-realm.json")
+    local = leer(plataforma / "mto-realm-local.json")
+    parciales, desarrollo = ficheros(raiz)
     keycloak = Keycloak(
         os.environ.get("KC_URL", "http://localhost:8082"),
         os.environ.get("KC_REALM", "mto"),
@@ -224,10 +286,11 @@ def main():
     clientes = los_clientes_conservan_lo_que_declaran(keycloak, parciales, problemas)
     secretos = los_secretos_son_los_de_desarrollo(keycloak, desarrollo, problemas)
     las_cuentas_de_servicio_tienen_sus_roles(keycloak, problemas)
+    los_eventos_del_realm_quedan_como_los_declara_el_base(keycloak, base, local, problemas)
 
     codigo = problemas.informe()
     if codigo == 0:
-        print(f"Realm ensamblado correcto: {clientes} clientes y {secretos} secretos comprobados en Keycloak.")
+        print(f"Realm ensamblado correcto: {clientes} clientes, {secretos} secretos y los eventos comprobados en Keycloak.")
     return codigo
 
 

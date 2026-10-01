@@ -36,18 +36,30 @@
 #      config.ops (perfil mto-ops), que la marca leida y que notificacion.lector no ve; por correo,
 #      con la entrega expandida por el directorio y el mensaje en Mailpit. Un cuarto fallo no repite.
 #   9. Un cambio del realm hecho con admin-cli llega como users.admin.user-updated con actor PERSON
-#      y avisa como «fuera de la aplicacion»; el del paso 5, hecho por mto-users, llega como SERVICE.
+#      y avisa como «fuera de la aplicacion».
 #
-# Con cada fase del servicio se anaden aqui sus pasos, en este orden (README de mto-notification):
-# la importacion de LOV como UN aviso resumido y la de perfiles como UNA linea con su recuento (2b/2d),
-# el cambio hecho desde el backoffice con la persona y el de Keycloak fundido (2c/2d), la orden
-# urgente que avisa a mantenimiento.responsable con correo (3b) y el material bajo minimo que avisa
-# a almacen.responsable una sola vez al dia (4b).
+# Fases 2b a 4b (los eventos propios de los demas servicios):
+#
+#  10. El cambio del paso 5, hecho por mto-users, llega con la persona (users.user.enabled de
+#      usuarios.responsable) y el evento de administracion de Keycloak del mismo cambio, hecho por su
+#      cuenta de servicio, queda fundido con el: solo sale con includeSuperseded=true.
+#  11. Un trabajo de mto-configuration (una importacion de listas de valores en seco) deja UNA linea
+#      configuration.job.finished y UN aviso a quien lo lanzo.
+#  12. Una orden urgente avisa a mantenimiento.responsable en su bandeja y por correo.
+#  13. Un material que cruza su minimo avisa a almacen.responsable en su bandeja y por correo; un
+#      segundo cruce queda en el registro pero no vuelve a avisar (freno de 24 h por material).
+#
+# Lo que deja en el stack, a proposito y con nombres que se reconocen: el tramo SMOKE-NOTIF de
+# mantenimiento (via 999999, se reutiliza) con una orden urgente cancelada por pasada, el almacen
+# SMOKE-NOTIF de stock (se reutiliza) y un material SMOKE-<fecha> retirado por pasada, ademas de los
+# avisos y correos de cada paso. La importacion del paso 11 es en seco: no escribe ningun catalogo.
 
 set -uo pipefail
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLATAFORMA="$(dirname "$AQUI")"
+# Los repositorios hermanos (el paso 11 sube un maestro de mto-configuration).
+HERMANOS="$(dirname "$PLATAFORMA")"
 
 # Los puertos y el secreto de la cuenta de servicio, del .env del stack (o del ejemplo si no hay).
 if [[ -f "$PLATAFORMA/.env" ]]; then
@@ -132,6 +144,44 @@ esperar() {
   for ((i = 0; i < tope; i++)); do
     [[ "$(codigo "$url")" == "$esperado" ]] && return 0
     sleep 1
+  done
+  return 1
+}
+
+# Espera en la bandeja del token $1 un aviso de la regla $2 sobre el sujeto $3 (el id de la orden,
+# del material, del trabajo...), desde $DESDE. Deja su id en AVISO_ID. Un print de Python acaba en
+# \r\n con el Python de Windows: se escribe sin salto de linea, como en campo().
+aviso() {
+  local token="$1" regla="$2" sujeto="$3" i
+  AVISO_ID=""
+  for ((i = 0; i < 30; i++)); do
+    if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $token" "$API/inbox?from=$DESDE&size=100")" == "200" ]]; then
+      AVISO_ID="$(python3 -c '
+import json, sys
+for item in json.load(open(sys.argv[1])).get("content", []):
+    if item.get("ruleKey") == sys.argv[2] and item.get("subjectId") == sys.argv[3]:
+        print(item["id"], end="")
+        break
+' "$CUERPO" "$regla" "$sujeto")"
+      [[ -n "$AVISO_ID" ]] && return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+# Espera en Mailpit un correo para la direccion $1 cuyo asunto lleve $2.
+correo() {
+  local para="$1" texto="$2" i
+  for ((i = 0; i < 30; i++)); do
+    if curl -sS "$MAILPIT/api/v1/search?query=to:$para&limit=50" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+sys.exit(0 if any(sys.argv[1] in (m.get("Subject") or "") for m in d.get("messages") or []) else 1)
+' "$texto"; then
+      return 0
+    fi
+    sleep 2
   done
   return 1
 }
@@ -253,7 +303,7 @@ sys.exit(0 if len(fallos) >= 3 else 1)
 
   # Lo que NO tiene que estar: los tokens de las cuentas de servicio no son accesos de nadie.
   c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_SVC" "$KC_URL/admin/realms/$KC_REALM/events?type=CLIENT_LOGIN&max=5")"
-  if [[ "$c" == "200" && "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$CUERPO")" == "0" ]]; then
+  if [[ "$c" == "200" && "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))), end="")' "$CUERPO")" == "0" ]]; then
     ok "ningun CLIENT_LOGIN registrado: los tipos de maquina siguen fuera de enabledEventTypes"
   else
     mal "hay eventos CLIENT_LOGIN en el realm (codigo $c): el ruido de las cuentas de servicio se esta registrando"
@@ -348,7 +398,8 @@ paso "7. El lector de Keycloak alimenta el registro: las fuentes avanzan y los a
 
 # Todo lo de esta fase se mira desde hace diez minutos: el guion puede pasarse varias veces al dia
 # y el registro guarda los accesos 90 dias.
-DESDE="$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+# Sin salto de linea: con el Python de Windows acabaria en \r, que bash no quita y que rompe la URL.
+DESDE="$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"), end="")')"
 # config.ops (perfil mto-ops) tiene la bandeja, el registro y la administracion; los accesos, con
 # usuario e IP, son del auditor.
 TOKEN_OPS="$(token_de config.ops "$CONTRASENA_LOCAL")"
@@ -435,7 +486,7 @@ else
 import json, sys
 for item in json.load(open(sys.argv[1])).get("content", []):
     if item.get("ruleKey") == "access-login-streak" and "config.lector" in (item.get("title") or ""):
-        print(item["id"]); break
+        print(item["id"], end=""); break
 ' "$CUERPO")"
       [[ -n "$ID_AVISO" ]] && break
     fi
@@ -500,7 +551,7 @@ sys.exit(0 if (d.get("messages_count") or len(d.get("messages") or [])) > 0 else
 fi
 
 # --- 9. Un cambio hecho fuera de la aplicacion ---------------------------------------------------
-paso "9. Un cambio del realm desde la consola es «fuera de la aplicacion»; el de mto-users, no"
+paso "9. Un cambio del realm desde la consola es «fuera de la aplicacion»"
 
 TOKEN_KC_ADMIN="$(curl -sS -X POST "$KC_URL/realms/master/protocol/openid-connect/token" \
   -d grant_type=password -d client_id=admin-cli -d "username=$KC_ADMIN_USER" -d "password=$KC_ADMIN_PASSWORD" 2>/dev/null \
@@ -532,16 +583,9 @@ sys.exit(0 if any(f.get("sourceService") == "keycloak-admin" and (f.get("actor")
       sleep 2
     done
     if [[ $VISTO -eq 1 ]]; then
+      # El del paso 5, hecho por mto-users, ya no sale aqui: el correlador lo funde con el evento de
+      # mto-users del mismo cambio y /activity lo esconde. Lo comprueba el paso 10.
       ok "GET /activity: el cambio de la consola es users.admin.user-updated con actor PERSON (clientId admin-cli)"
-      if python3 -c '
-import json, sys
-filas = json.load(open(sys.argv[1])).get("content", [])
-sys.exit(0 if any((f.get("actor") or {}).get("kind") == "SERVICE" and (f.get("actor") or {}).get("username") == "service-account-mto-users-svc" for f in filas) else 1)
-' "$CUERPO"; then
-        ok "y el del paso 5, hecho por mto-users, llega con actor SERVICE service-account-mto-users-svc"
-      else
-        mal "el cambio hecho por mto-users (paso 5) no aparece con actor SERVICE en /activity"
-      fi
     else
       mal "el cambio de la consola no aparece en /activity como users.admin.user-updated en 90 s"
     fi
@@ -562,8 +606,234 @@ sys.exit(0 if any(i.get("ruleKey") == "users-change-outside-application" for i i
   rm -f "$CUERPO"
 fi
 
+# --- 10. El cambio de mto-users, con la persona y una sola vez ------------------------------------
+paso "10. El cambio del paso 5, hecho por mto-users, llega con la persona y el de Keycloak queda fundido"
+
+if [[ -z "${TOKEN_OPS:-}" || -z "${ID_LECTOR:-}" ]]; then
+  mal "sin token de config.ops o sin el id de config.lector del paso 5; se omite"
+else
+  CUERPO="$(mktemp)"
+  # El paso 5 activo a config.lector desde mto-users: su evento (users.user.enabled, con
+  # usuarios.responsable) y el de administracion que Keycloak escribe del mismo cambio
+  # (users.admin.user-updated, con la cuenta de servicio de mto-users). El correlador marca el de
+  # Keycloak con superseded_by apuntando al de mto-users, llegue el que llegue primero.
+  FUNDIDA=""
+  for ((i = 0; i < 45; i++)); do
+    if [[ "$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/activity?category=USERS&subjectId=$ID_LECTOR&from=$DESDE&includeSuperseded=true&size=50")" == "200" ]]; then
+      FUNDIDA="$(python3 -c '
+import json, sys
+filas = json.load(open(sys.argv[1])).get("content", [])
+personas = {f["id"] for f in filas if f.get("type") == "users.user.enabled"
+            and (f.get("actor") or {}).get("kind") == "PERSON"
+            and (f.get("actor") or {}).get("username") == "usuarios.responsable"}
+for f in filas:
+    if (f.get("type") == "users.admin.user-updated" and (f.get("actor") or {}).get("kind") == "SERVICE"
+            and f.get("supersededBy") in personas):
+        print(f["id"], end="")
+        break
+' "$CUERPO")"
+      [[ -n "$FUNDIDA" ]] && break
+    fi
+    sleep 2
+  done
+  if [[ -z "$FUNDIDA" ]]; then
+    mal "no hay users.user.enabled de usuarios.responsable con el users.admin.user-updated de mto-users-svc fundido en 90 s (mto-users publica en mto.users.exchange?)"
+  else
+    ok "GET /activity?includeSuperseded=true: users.user.enabled con usuarios.responsable, y el users.admin.user-updated de mto-users-svc fundido en el"
+    c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_OPS" "$API/activity?category=USERS&subjectId=$ID_LECTOR&from=$DESDE&size=50")"
+    if [[ "$c" == "200" ]] && python3 -c '
+import json, sys
+sys.exit(0 if all(f.get("id") != sys.argv[2] for f in json.load(open(sys.argv[1])).get("content", [])) else 1)
+' "$CUERPO" "$FUNDIDA"; then
+      ok "GET /activity sin includeSuperseded no la ensena: el cambio cuenta una vez, con la persona"
+    else
+      mal "la linea fundida de Keycloak sale en /activity sin includeSuperseded (codigo $c)"
+    fi
+  fi
+  rm -f "$CUERPO"
+fi
+
+# --- 11. Un trabajo de mto-configuration: una linea y un aviso a quien lo lanzo -------------------
+paso "11. Un trabajo de mto-configuration deja UNA linea configuration.job.finished y UN aviso a quien lo lanzo"
+
+TOKEN_CONFIG="$(token_de config.responsable "$CONTRASENA_LOCAL")"
+if [[ -z "$TOKEN_CONFIG" ]]; then
+  mal "sin token de config.responsable; se omite"
+elif [[ ! -f "$HERMANOS/mto-configuration/data/lov-master.xlsx" ]]; then
+  mal "no se encuentra $HERMANOS/mto-configuration/data/lov-master.xlsx (mto-configuration tiene que estar como hermano); se omite"
+else
+  CUERPO="$(mktemp)"
+  # Una importacion de listas de valores EN SECO: no escribe ningun catalogo, pero el trabajo termina
+  # y publica job.finished por mto.configuration.exchange. Las listas de valores no publican datos
+  # maestros, asi que todo su rastro es esa linea y su aviso. El fichero va con ruta relativa desde su
+  # repositorio: un curl nativo de Windows no entiende las rutas del shell.
+  c="$(cd "$HERMANOS/mto-configuration" && CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_CONFIG" \
+    -F "file=@data/lov-master.xlsx" "$GATEWAY/api/configuration/lovs/jobs/import?dryRun=true")"
+  TRABAJO="$(campo id < "$CUERPO")"
+  if [[ "$c" != "202" || -z "$TRABAJO" ]]; then
+    mal "POST /api/configuration/lovs/jobs/import?dryRun=true: $c $(campo code < "$CUERPO") (un 429 es que ya corre otra importacion)"
+  else
+    ok "importacion de listas de valores en seco lanzada por config.responsable: trabajo $TRABAJO"
+    if esperar_total "$API/activity?type=configuration.job.finished&subjectId=$TRABAJO" "$TOKEN_CONFIG" 1 60; then
+      TOTAL="$(campo page.totalElements < "$CUERPO")"
+      [[ "$TOTAL" == "1" ]] && ok "GET /activity: una linea configuration.job.finished del trabajo ($(campo content.0.payload.status < "$CUERPO"))" \
+        || mal "hay $TOTAL lineas configuration.job.finished del trabajo $TRABAJO (se esperaba una)"
+    else
+      mal "el trabajo $TRABAJO no deja su linea configuration.job.finished en 2 min (mto-configuration publica en mto.configuration.exchange?)"
+    fi
+    if aviso "$TOKEN_CONFIG" configuration-job-finished "$TRABAJO"; then
+      ok "config.responsable tiene el aviso del trabajo terminado (regla configuration-job-finished, a quien lo lanzo)"
+    else
+      mal "config.responsable no tiene el aviso del trabajo $TRABAJO en 60 s (regla configuration-job-finished)"
+    fi
+  fi
+  rm -f "$CUERPO"
+fi
+
+# --- 12. Una orden urgente: aviso y correo a mantenimiento.responsable ----------------------------
+paso "12. Una orden urgente avisa a mantenimiento.responsable, en su bandeja y por correo"
+
+TOKEN_TECNICO="$(token_de mantenimiento.tecnico "$CONTRASENA_LOCAL")"
+TOKEN_MANTENIMIENTO="$(token_de mantenimiento.responsable "$CONTRASENA_LOCAL")"
+MANTENIMIENTO="$GATEWAY/api/maintenance"
+if [[ -z "$TOKEN_TECNICO" || -z "$TOKEN_MANTENIMIENTO" ]]; then
+  mal "sin token de mantenimiento.tecnico o de mantenimiento.responsable; se omite"
+else
+  CUERPO="$(mktemp)"
+  # Un tramo propio y fijo, SMOKE-NOTIF, sobre una via que no existe (999999): se crea la primera vez y
+  # se reutiliza despues. La orden es nueva en cada pasada y se cancela al final.
+  c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_TECNICO" "$MANTENIMIENTO/assets?code=SMOKE-NOTIF&size=20")"
+  TRAMO="$(python3 -c '
+import json, sys
+for activo in json.load(open(sys.argv[1])).get("content", []):
+    if activo.get("code") == "SMOKE-NOTIF":
+        print(activo["id"], end="")
+        break
+' "$CUERPO" 2>/dev/null)"
+  if [[ -z "$TRAMO" ]]; then
+    c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_TECNICO" -H "Content-Type: application/json" \
+      -d '{"code":"SMOKE-NOTIF","name":"Tramo del script de humo de mto-notification","trackId":999999,"startKp":0.000,"endKp":1.000,"trackKind":"MAIN"}' \
+      "$MANTENIMIENTO/assets")"
+    TRAMO="$(campo id < "$CUERPO")"
+  fi
+  if [[ -z "$TRAMO" ]]; then
+    mal "no se encuentra ni se puede crear el tramo SMOKE-NOTIF en mto-maintenance (codigo $c)"
+  else
+    c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_TECNICO" -H "Content-Type: application/json" \
+      -d "{\"title\":\"Prueba del script de humo\",\"type\":\"URGENT\",\"assetId\":\"$TRAMO\"}" "$MANTENIMIENTO/orders")"
+    ORDEN="$(campo id < "$CUERPO")"
+    CODIGO_ORDEN="$(campo code < "$CUERPO")"
+    if [[ "$c" != "201" || -z "$ORDEN" ]]; then
+      mal "POST /api/maintenance/orders con type URGENT: $c $(campo errorCode < "$CUERPO")"
+    else
+      ok "orden urgente $CODIGO_ORDEN creada por mantenimiento.tecnico sobre el tramo SMOKE-NOTIF"
+      if aviso "$TOKEN_MANTENIMIENTO" maintenance-order-urgent "$ORDEN"; then
+        ok "mantenimiento.responsable tiene el aviso «Orden urgente $CODIGO_ORDEN» (regla maintenance-order-urgent)"
+      else
+        mal "mantenimiento.responsable no tiene el aviso de $CODIGO_ORDEN en 60 s (mto-maintenance publica en mto.maintenance.exchange?)"
+      fi
+      if correo "mantenimiento.responsable@mto.local" "$CODIGO_ORDEN"; then
+        ok "el correo de la orden urgente $CODIGO_ORDEN para mantenimiento.responsable@mto.local esta en Mailpit"
+      else
+        mal "el correo de la orden urgente $CODIGO_ORDEN no esta en Mailpit ($MAILPIT)"
+      fi
+      # Se cancela para no dejar ordenes urgentes abiertas; eso tambien avisa (maintenance-order-closed).
+      c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_MANTENIMIENTO" -H "Content-Type: application/json" \
+        -d '{"reason":"Prueba del script de humo de mto-notification"}' "$MANTENIMIENTO/orders/$ORDEN/cancel")"
+      [[ "$c" == "200" ]] && ok "la orden $CODIGO_ORDEN, cancelada por mantenimiento.responsable" \
+        || mal "POST /api/maintenance/orders/$ORDEN/cancel: $c $(campo errorCode < "$CUERPO")"
+    fi
+  fi
+  rm -f "$CUERPO"
+fi
+
+# --- 13. Un material bajo minimo: un aviso al cruzar, y ninguno mas en el dia ---------------------
+paso "13. Un material que cruza su minimo avisa a almacen.responsable una vez; el segundo cruce no repite"
+
+TOKEN_ALMACEN="$(token_de almacen.responsable "$CONTRASENA_LOCAL")"
+ALMACEN_API="$GATEWAY/api/stock"
+if [[ -z "$TOKEN_ALMACEN" ]]; then
+  mal "sin token de almacen.responsable; se omite"
+else
+  CUERPO="$(mktemp)"
+  # Un almacen fijo, SMOKE-NOTIF, que se crea la primera vez; y un material nuevo en cada pasada,
+  # porque el freno de la regla es de 24 h por material. El material se retira al final.
+  c="$(CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_ALMACEN" "$ALMACEN_API/warehouses?search=SMOKE-NOTIF&size=20")"
+  ALMACEN="$(python3 -c '
+import json, sys
+for almacen in json.load(open(sys.argv[1])).get("content", []):
+    if almacen.get("code") == "SMOKE-NOTIF":
+        print(almacen["id"], end="")
+        break
+' "$CUERPO" 2>/dev/null)"
+  if [[ -z "$ALMACEN" ]]; then
+    c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_ALMACEN" -H "Content-Type: application/json" \
+      -d '{"code":"SMOKE-NOTIF","name":"Almacen del script de humo de mto-notification"}' "$ALMACEN_API/warehouses")"
+    ALMACEN="$(campo id < "$CUERPO")"
+  fi
+  MATERIAL_CODIGO="SMOKE-$(date -u +%Y%m%d%H%M%S)"
+  MATERIAL_CUERPO="{\"code\":\"$MATERIAL_CODIGO\",\"name\":\"Material del script de humo\",\"unitOfMeasure\":\"ud\",\"minimumStockLevel\":10"
+  MATERIAL=""
+  if [[ -n "$ALMACEN" ]]; then
+    c="$(CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_ALMACEN" -H "Content-Type: application/json" \
+      -d "$MATERIAL_CUERPO}" "$ALMACEN_API/materials")"
+    MATERIAL="$(campo id < "$CUERPO")"
+  fi
+  if [[ -z "$ALMACEN" || -z "$MATERIAL" ]]; then
+    mal "no se puede preparar el almacen SMOKE-NOTIF o el material $MATERIAL_CODIGO en mto-stock (codigo $c)"
+  else
+    movimiento() {
+      CUERPO="$CUERPO" codigo -X POST -H "Authorization: Bearer $TOKEN_ALMACEN" -H "Content-Type: application/json" \
+        -d "{\"materialId\":\"$MATERIAL\",\"warehouseId\":\"$ALMACEN\",\"quantity\":$2,\"externalReference\":\"SMOKE-NOTIF\"}" \
+        "$ALMACEN_API/movements/$1"
+    }
+    # 15 de entrada y 10 de salida: el disponible pasa de 15 a 5, por debajo del minimo de 10.
+    entrada="$(movimiento entries 15)"
+    salida="$(movimiento outputs 10)"
+    if [[ "$entrada" != "201" || "$salida" != "201" ]]; then
+      mal "entrada $entrada y salida $salida del material $MATERIAL_CODIGO (se esperaban 201)"
+    else
+      ok "$MATERIAL_CODIGO: entrada de 15 y salida de 10, de 15 a 5 disponibles con un minimo de 10"
+      if aviso "$TOKEN_ALMACEN" stock-material-below-minimum "$MATERIAL"; then
+        ok "almacen.responsable tiene el aviso «Material $MATERIAL_CODIGO por debajo del minimo» (regla stock-material-below-minimum)"
+      else
+        mal "almacen.responsable no tiene el aviso de $MATERIAL_CODIGO en 60 s (mto-stock publica en mto.stock.exchange?)"
+      fi
+      if correo "almacen.responsable@mto.local" "$MATERIAL_CODIGO"; then
+        ok "el correo de $MATERIAL_CODIGO para almacen.responsable@mto.local esta en Mailpit"
+      else
+        mal "el correo del material $MATERIAL_CODIGO bajo minimo no esta en Mailpit ($MAILPIT)"
+      fi
+      # Vuelve a cruzar: 10 de entrada (15) y 10 de salida (5). Stock publica otra vez y el registro lo
+      # guarda, pero la regla no avisa otra vez del mismo material en 24 h.
+      entrada="$(movimiento entries 10)"
+      salida="$(movimiento outputs 10)"
+      if [[ "$entrada" == "201" && "$salida" == "201" ]] \
+          && esperar_total "$API/activity?type=stock.material.below-minimum&subjectId=$MATERIAL" "$TOKEN_ALMACEN" 2 30; then
+        sleep 5
+        CUERPO="$CUERPO" codigo -H "Authorization: Bearer $TOKEN_ALMACEN" "$API/inbox?from=$DESDE&size=100" >/dev/null
+        AVISOS="$(python3 -c '
+import json, sys
+filas = json.load(open(sys.argv[1])).get("content", [])
+print(sum(1 for f in filas if f.get("ruleKey") == "stock-material-below-minimum" and f.get("subjectId") == sys.argv[2]), end="")
+' "$CUERPO" "$MATERIAL")"
+        [[ "$AVISOS" == "1" ]] && ok "segundo cruce: dos lineas stock.material.below-minimum en el registro y un solo aviso (freno de 24 h por material)" \
+          || mal "tras el segundo cruce hay $AVISOS avisos de $MATERIAL_CODIGO (se esperaba uno)"
+      else
+        mal "el segundo cruce de $MATERIAL_CODIGO no deja su segunda linea en el registro (entrada $entrada, salida $salida)"
+      fi
+    fi
+    # Se retira el material: sus apuntes se quedan, pero deja de estar entre los activos.
+    c="$(CUERPO="$CUERPO" codigo -X PUT -H "Authorization: Bearer $TOKEN_ALMACEN" -H "Content-Type: application/json" \
+      -d "$MATERIAL_CUERPO,\"active\":false}" "$ALMACEN_API/materials/$MATERIAL")"
+    [[ "$c" == "200" ]] && ok "el material $MATERIAL_CODIGO, retirado" \
+      || mal "PUT /api/stock/materials/$MATERIAL con active=false: $c"
+  fi
+  rm -f "$CUERPO"
+fi
+
 # --- Resumen ---------------------------------------------------------------------------------------
 echo
 echo "$BIEN comprobaciones bien, $MAL mal."
-echo "Pasos de fases posteriores (importacion resumida, cambio desde el backoffice, orden urgente, bajo minimo): se anaden con su fase."
+echo "Deja el tramo y el almacen SMOKE-NOTIF, una orden urgente cancelada, un material SMOKE-<fecha> retirado y sus avisos y correos."
 [[ $MAL -eq 0 ]]

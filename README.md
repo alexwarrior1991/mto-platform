@@ -350,9 +350,17 @@ servicio entero: las dos fuentes de Keycloak avanzando (`/admin/sources`), el lo
 `/access` (y nunca en `/activity`), la racha de tres fallos como **un** `access.login.streak` y **un**
 aviso en la bandeja de `config.ops` y en Mailpit (con la entrega expandida por el directorio), que un
 cuarto fallo no repite, y que un cambio del realm hecho con `admin-cli` llega como «fuera de la
-aplicacion» mientras el hecho por `mto-users` llega con su cuenta de servicio. Cada fase anade sus
-pasos (la importacion resumida, el cambio desde el backoffice, la orden urgente, el material bajo
-minimo); el guion dice cuales estan ya y cuales no.
+aplicacion». Y con las fuentes de las fases 2b a 4b: que un cambio hecho desde `mto-users` llega con
+la persona y el evento de Keycloak del mismo cambio queda fundido con el, que un trabajo de
+`mto-configuration` (una importacion de listas de valores en seco) deja **una** linea y **un** aviso a
+quien lo lanzo, que una orden urgente avisa a `mantenimiento.responsable` en su bandeja y por correo, y
+que un material que cruza su minimo avisa a `almacen.responsable` una vez aunque vuelva a cruzar.
+
+Toca datos de verdad, con nombres que se reconocen: el tramo `SMOKE-NOTIF` de mantenimiento (via
+999999) y el almacen `SMOKE-NOTIF` de stock se crean la primera vez y se reutilizan; cada pasada deja
+una orden urgente cancelada, un material `SMOKE-<fecha>` retirado y sus avisos y correos. Con todo bien
+termina en `47 comprobaciones bien, 0 mal.`; entre dos pasadas conviene dejar diez minutos, porque el
+paso 8 espera exactamente una racha de `config.lector` en ese tiempo.
 
 ## Parar
 

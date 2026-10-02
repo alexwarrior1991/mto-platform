@@ -133,7 +133,7 @@ jobs:
               echo "La infraestructura '$esperado' no arranca sin perfil"; exit 1
             fi
           done
-          for app in configuration stock gateway maintenance users notification backoffice; do
+          for app in configuration stock gateway maintenance users notification backoffice frontend; do
             if grep -qx "$app" <<<"$sin_perfil"; then
               echo "La aplicacion '$app' arranca sin pedir su perfil"; exit 1
             fi

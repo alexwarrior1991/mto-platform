@@ -253,7 +253,6 @@ services:
       KEYCLOAK_CLIENT_ID: mto-configuration-api
       KEYCLOAK_AUDIENCE: mto-configuration-api
       KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
-      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
     extra_hosts:
       - "auth.mto.local:host-gateway"
       - "otel.mto.local:host-gateway"
@@ -301,7 +300,6 @@ services:
       KEYCLOAK_AUDIENCE: mto-stock-api
       KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
-      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
       MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
       MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
     extra_hosts:
@@ -356,7 +354,6 @@ services:
       KEYCLOAK_AUDIENCE: mto-maintenance-api
       KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
-      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
       MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -399,7 +396,6 @@ services:
       MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
-      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
     extra_hosts:
       - "auth.mto.local:host-gateway"
       - "otel.mto.local:host-gateway"
@@ -455,7 +451,6 @@ services:
       KEYCLOAK_AUDIENCE: mto-notification-api
       KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
-      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://localhost:4200}
       MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"

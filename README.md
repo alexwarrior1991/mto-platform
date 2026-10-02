@@ -89,9 +89,9 @@ infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `l
 es `npm run dev` desde su repositorio, en el 4200, y el contenedor ocuparia ese puerto (es el
 redirect URI de su cliente en el realm). Para probar su imagen, con el resto ya levantado:
 `docker compose --profile frontend up -d --build frontend`. Su nginx reenvia `/api` al gateway por
-el mismo origen y sin `Origin`, asi que la SPA no usa los origenes CORS del gateway ni de los
-servicios. Entra por `http://localhost:4200` con cualquier usuario de desarrollo; su README cuenta
-como probarla desde WebStorm y que comprueba `npm run doctor`.
+el mismo origen y sin `Origin`, asi que la SPA no usa los origenes CORS del gateway (los servicios
+no tienen CORS propio). Entra por `http://localhost:4200` con cualquier usuario de desarrollo; su
+README cuenta como probarla desde WebStorm y que comprueba `npm run doctor`.
 
 `mto-maintenance` llama a `mto-stock` para reservar y consumir material: sin el, arranca igual,
 pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,

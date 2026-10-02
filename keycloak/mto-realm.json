@@ -40,14 +40,17 @@
     {
       "clientId": "mto-frontend",
       "name": "Frontal MTO",
-      "description": "Aplicacion de navegador. Authorization Code con PKCE. Vive en el realm base porque sus audience mapper resuelven el destino al emitir el token, no al importar: pueden nombrar clientes que todavia no existen.",
+      "description": "La SPA de navegador (mto-frontend). Authorization Code con PKCE y el token solo en memoria. Vive en el realm base porque sus audience mapper resuelven el destino al emitir el token, no al importar: pueden nombrar clientes que todavia no existen.",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
+      "rootUrl": "http://localhost:4200",
+      "baseUrl": "/",
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:4200/*"
       },
       "redirectUris": [
         "http://localhost:4200/*"

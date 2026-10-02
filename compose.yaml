@@ -9,6 +9,7 @@
 #   docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 #   docker compose --profile configuration --profile gateway up -d  # dos de seis
 #   docker compose --profile backoffice --profile gateway up -d      # la web y el gateway al que llama
+#   docker compose --profile frontend up -d --build frontend         # la imagen de la SPA (no entra en 'all')
 #   docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
@@ -536,6 +537,43 @@ services:
       - "${MTO_BACKOFFICE_PORT:-8085}:8080"
     depends_on:
       keycloak: {condition: service_healthy}
+
+  # La SPA (React) que va relevando al backoffice: nginx sirve la aplicacion y reenvia /api al
+  # gateway por el mismo origen, sin Origin. El navegador entra por Keycloak con el cliente publico
+  # mto-frontend; nginx nunca habla con Keycloak, por eso no lleva extra_hosts.
+  #
+  # Mientras convivan los dos frontales solo tiene su perfil, no 'all': en desarrollo lo habitual es
+  # 'npm run dev' en el 4200 desde su repositorio, y el contenedor ocuparia ese puerto. Sirve para
+  # probar la imagen (nginx, la CSP, la configuracion por variables). Pasa a 'all' en el relevo.
+  #
+  # Sin depends_on a proposito: el gateway esta en otro perfil y un depends_on obligatorio rompe
+  # 'docker compose --profile frontend config'. nginx resuelve el gateway en cada peticion, asi que
+  # arranca aunque el gateway no este y responde 503 hasta que llegue.
+  #
+  # Lleva 'build' ademas de 'image', como el backoffice: hasta que la imagen exista en GHCR (la
+  # publica el CI de mto-frontend al fusionar en master), compose la construye desde ../mto-frontend.
+  frontend:
+    image: ghcr.io/alexwarrior1991/mto-frontend:${MTO_FRONTEND_TAG:-latest}
+    build:
+      context: ../mto-frontend
+    container_name: mto-frontend
+    profiles: [frontend]
+    restart: unless-stopped
+    environment:
+      # El realm tal como lo ve el navegador (el 'iss' de los tokens).
+      MTO_OIDC_AUTHORITY: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      MTO_OIDC_CLIENT_ID: mto-frontend
+      # El gateway por su nombre de servicio. Si el gateway se arranca desde el IDE, nginx no lo
+      # encontraria por host.docker.internal (su resolver no lee /etc/hosts): arranquese la SPA con
+      # 'npm run dev', que llega al gateway del host.
+      MTO_GATEWAY_URL: http://gateway:8090
+      MTO_ENVIRONMENT: local
+      # Las pantallas que aun no han llegado enlazan a la misma ruta del backoffice.
+      MTO_BACKOFFICE_URL: ${MTO_BACKOFFICE_PUBLIC_URL:-http://localhost:8085}
+    ports:
+      # 4200 no es libre: es el redirect URI del cliente mto-frontend en el realm. Ni a la vez que
+      # 'npm run dev'.
+      - "${MTO_FRONTEND_PORT:-4200}:8080"
 
 volumes:
   postgres_data:

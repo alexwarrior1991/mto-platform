@@ -1,8 +1,8 @@
 # mto-platform
 
 Entorno de **desarrollo local** del dominio MTO: una sola infraestructura compartida por
-`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-notification`, `mto-gateway`
-y `mto-backoffice`, y el realm de Keycloak que los siete usan.
+`mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-notification`, `mto-gateway`,
+`mto-backoffice` y `mto-frontend`, y el realm de Keycloak que los ocho usan.
 
 No es el mecanismo de despliegue de entornos reales.
 
@@ -33,8 +33,9 @@ tokens es esa URL y tiene que resolverse igual desde dentro de compose y desde e
 127.0.0.1  auth.mto.local  otel.mto.local
 ```
 
-Los ocho repositorios tienen que estar como hermanos en el mismo directorio: el script de
-ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio.
+Los nueve repositorios tienen que estar como hermanos en el mismo directorio: el script de
+ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio, y
+compose construye desde el checkout hermano las imagenes que aun no estan en GHCR.
 
 ```
 mto/
@@ -45,7 +46,8 @@ mto/
 ├── mto-users/
 ├── mto-notification/
 ├── mto-gateway/
-└── mto-backoffice/
+├── mto-backoffice/
+└── mto-frontend/
 ```
 
 ## Arrancar
@@ -66,6 +68,7 @@ docker compose --profile stock --profile maintenance up -d      # mto-maintenanc
 docker compose --profile configuration --profile gateway up -d  # dos de cinco
 docker compose --profile users --profile gateway up -d          # administracion de usuarios detras del gateway
 docker compose --profile backoffice --profile gateway up -d     # la web y el gateway al que llama
+docker compose --profile frontend up -d --build frontend        # la imagen de la SPA (no entra en all)
 docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 ```
 
@@ -80,6 +83,15 @@ construye desde el checkout hermano `../mto-backoffice`, asi que `--profile all`
 cuando exista, `docker compose pull backoffice` la trae. En desarrollo lo habitual sigue siendo
 arrancarlo desde su repositorio (`./mvnw spring-boot:run`, puerto 8085) contra esta
 infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `local`.
+
+`mto-frontend` (la SPA en React que va relevando al backoffice, fase a fase) tiene el perfil
+`frontend` y, mientras convivan los dos frontales, **no entra en `all`**: en desarrollo lo habitual
+es `npm run dev` desde su repositorio, en el 4200, y el contenedor ocuparia ese puerto (es el
+redirect URI de su cliente en el realm). Para probar su imagen, con el resto ya levantado:
+`docker compose --profile frontend up -d --build frontend`. Su nginx reenvia `/api` al gateway por
+el mismo origen y sin `Origin`, asi que la SPA no usa los origenes CORS del gateway ni de los
+servicios. Entra por `http://localhost:4200` con cualquier usuario de desarrollo; su README cuenta
+como probarla desde WebStorm y que comprueba `npm run doctor`.
 
 `mto-maintenance` llama a `mto-stock` para reservar y consumir material: sin el, arranca igual,
 pero cada reserva queda en `FAILED` hasta reintentarla. Sus activos (perfiles, seccionadores,
@@ -121,6 +133,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 
 | | |
 |---|---|
+| `mto-frontend` | 4200 (el redirect URI de su cliente; o `npm run dev`, o el contenedor) |
 | `mto-stock` | 8080 |
 | `mto-configuration` | 8081 |
 | `mto-maintenance` | 8083 |
@@ -172,7 +185,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 
 | paso | fichero | repositorio | que aporta |
 |---|---|---|---|
-| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, los eventos (abajo), `mto-frontend` y el perfil de usuario |
+| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, los eventos (abajo), `mto-frontend` (el cliente publico de la SPA: PKCE, con redirect, web origin y post-logout en `localhost:4200`) y el perfil de usuario |
 | 1b | `mto-notification-partial-import.json` | notification | `mto-notification-api`, `mto-notification-svc`, sus permisos y los perfiles `mto-notification-*`. **La primera de las parciales**: los perfiles de los demas servicios nombraran `notification-inbox` (cada persona tiene su bandeja), y un compuesto solo puede nombrar roles de un cliente que ya exista |
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
@@ -186,6 +199,15 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 9 | *(API de administracion)* | platform | los eventos del realm tal como los declara `mto-realm.json` (`events/config` y el atributo `adminEventsExpiration`) y, si se aplican los usuarios de desarrollo, el `smtpServer` hacia Mailpit de `mto-realm-local.json` |
 
 El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 1b al 9, `apply-partials.sh`.
+
+El paso 1 solo actua al **crear** el realm, y el contenedor de Keycloak no tiene volumen: un cambio
+en `mto-realm*.json` (como el post-logout de `mto-frontend`) se aplica recreando Keycloak y
+volviendo a ensamblar el realm, a costa de lo que se hubiera creado a mano en el:
+
+```bash
+docker compose up -d --force-recreate keycloak
+./keycloak/apply-partials.sh
+```
 
 Los secretos del paso 7 no se importan con el resto del fichero, y el motivo cuesta caro si no se
 sabe: **una importacion parcial con `OVERWRITE` sustituye el cliente ENTERO** por lo que trae el

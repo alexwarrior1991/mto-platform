@@ -67,8 +67,8 @@ docker compose --profile stock up -d                            # infraestructur
 docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 docker compose --profile configuration --profile gateway up -d  # dos de cinco
 docker compose --profile users --profile gateway up -d          # administracion de usuarios detras del gateway
-docker compose --profile backoffice --profile gateway up -d     # la web y el gateway al que llama
-docker compose --profile frontend up -d --build frontend        # la imagen de la SPA (no entra en all)
+docker compose --profile backoffice --profile gateway up -d     # el backoffice y el gateway al que llama
+docker compose --profile frontend --profile gateway up -d       # la SPA y el gateway al que llama
 docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 ```
 
@@ -76,7 +76,15 @@ docker compose --profile notification up -d                     # el registro de
 la Admin API de Keycloak con su cuenta de servicio `mto-users-svc`, cuyos roles de
 `realm-management` concede `apply-partials.sh` (paso 8).
 
-`mto-backoffice` (la aplicacion web, Vaadin) tiene el perfil `backoffice` y necesita el gateway
+El dominio tiene **dos aplicaciones web que se usan indistintamente**, `mto-backoffice` (Vaadin)
+y `mto-frontend` (React): las mismas pantallas, las mismas rutas y las mismas reglas, cada una con
+su cliente de login en el realm. Las dos entran en `all`, cada una en su puerto, y en la barra de
+cada una 'Abrir en ...' lleva a la misma pantalla en la otra (`MTO_BACKOFFICE_PUBLIC_URL` y
+`MTO_FRONTEND_PUBLIC_URL` en `.env`). Los enlaces de los correos de `mto-notification` van al
+backoffice (`APP_NOTIFICATION_LINK_BASE_URL`); como las rutas son las mismas, valdrian igual hacia la
+SPA.
+
+`mto-backoffice` tiene el perfil `backoffice` y necesita el gateway
 (`--profile backoffice --profile gateway`, o `all`). Su servicio lleva `build` ademas de `image`:
 hasta que la imagen exista en GHCR —la publica su CI al fusionar en `master`— compose la
 construye desde el checkout hermano `../mto-backoffice`, asi que `--profile all` funciona igual;
@@ -84,11 +92,11 @@ cuando exista, `docker compose pull backoffice` la trae. En desarrollo lo habitu
 arrancarlo desde su repositorio (`./mvnw spring-boot:run`, puerto 8085) contra esta
 infraestructura. Entra por `http://localhost:8085` con `config.responsable` / `local`.
 
-`mto-frontend` (la SPA en React que va relevando al backoffice, fase a fase) tiene el perfil
-`frontend` y, mientras convivan los dos frontales, **no entra en `all`**: en desarrollo lo habitual
-es `npm run dev` desde su repositorio, en el 4200, y el contenedor ocuparia ese puerto (es el
-redirect URI de su cliente en el realm). Para probar su imagen, con el resto ya levantado:
-`docker compose --profile frontend up -d --build frontend`. Su nginx reenvia `/api` al gateway por
+`mto-frontend` tiene el perfil `frontend` y necesita el gateway (`--profile frontend --profile
+gateway`, o `all`). Como el backoffice, lleva `build` ademas de `image`. El 4200 es el redirect URI
+de su cliente en el realm, y lo usan tanto el contenedor como `npm run dev`: para desarrollar la SPA
+desde su repositorio con todo levantado, parese antes el contenedor (`docker compose stop
+frontend`). Su nginx reenvia `/api` al gateway por
 el mismo origen y sin `Origin`, asi que la SPA no usa los origenes CORS del gateway (los servicios
 no tienen CORS propio). Entra por `http://localhost:4200` con cualquier usuario de desarrollo; su
 README cuenta como probarla desde WebStorm y que comprueba `npm run doctor`.

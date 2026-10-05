@@ -8,8 +8,8 @@
 #   docker compose --profile stock up -d                            # infraestructura + mto-stock
 #   docker compose --profile stock --profile maintenance up -d      # mto-maintenance y el stock al que llama
 #   docker compose --profile configuration --profile gateway up -d  # dos de seis
-#   docker compose --profile backoffice --profile gateway up -d      # la web y el gateway al que llama
-#   docker compose --profile frontend up -d --build frontend         # la imagen de la SPA (no entra en 'all')
+#   docker compose --profile backoffice --profile gateway up -d      # el backoffice y el gateway al que llama
+#   docker compose --profile frontend --profile gateway up -d        # la SPA y el gateway al que llama
 #   docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
@@ -498,8 +498,10 @@ services:
     depends_on:
       keycloak: {condition: service_healthy}
 
-  # La aplicacion web (Vaadin). No persiste nada: solo necesita Keycloak para el login y el
-  # gateway, al que habla servidor a servidor con el token de la persona.
+  # El backoffice (Vaadin), una de las dos aplicaciones web del dominio; la otra es la SPA de abajo,
+  # con las mismas pantallas y las mismas rutas, y las dos se usan indistintamente. No persiste nada:
+  # solo necesita Keycloak para el login y el gateway, al que habla servidor a servidor con el token
+  # de la persona.
   #
   # Lleva 'build' ademas de 'image' a proposito: hasta que la imagen exista en GHCR (la publica
   # el CI de mto-backoffice al fusionar en master), compose la construye desde el checkout hermano
@@ -522,6 +524,9 @@ services:
       # El gateway por su nombre de servicio. Si el gateway se arranca desde el IDE, apuntese a
       # http://host.docker.internal:8090.
       MTO_GATEWAY_URL: ${MTO_GATEWAY_URL:-http://gateway:8090}
+      # 'Abrir en mto-frontend', en la barra, lleva a la misma pantalla en la SPA, tal como la ve el
+      # navegador.
+      MTO_FRONTEND_URL: ${MTO_FRONTEND_PUBLIC_URL:-http://localhost:4200}
     # El 'iss' de los tokens es http://auth.mto.local:8082 y el navegador entra a Keycloak por ese
     # mismo nombre: la aplicacion tiene que resolverlo igual que el host.
     extra_hosts:
@@ -533,13 +538,14 @@ services:
     depends_on:
       keycloak: {condition: service_healthy}
 
-  # La SPA (React) que va relevando al backoffice: nginx sirve la aplicacion y reenvia /api al
-  # gateway por el mismo origen, sin Origin. El navegador entra por Keycloak con el cliente publico
-  # mto-frontend; nginx nunca habla con Keycloak, por eso no lleva extra_hosts.
+  # La SPA (React), la otra aplicacion web: las mismas pantallas, rutas y reglas que el backoffice, y
+  # las dos se usan indistintamente. nginx sirve la aplicacion y reenvia /api al gateway por el mismo
+  # origen, sin Origin. El navegador entra por Keycloak con el cliente publico mto-frontend; nginx
+  # nunca habla con Keycloak, por eso no lleva extra_hosts.
   #
-  # Mientras convivan los dos frontales solo tiene su perfil, no 'all': en desarrollo lo habitual es
-  # 'npm run dev' en el 4200 desde su repositorio, y el contenedor ocuparia ese puerto. Sirve para
-  # probar la imagen (nginx, la CSP, la configuracion por variables). Pasa a 'all' en el relevo.
+  # Entra en 'all' junto al backoffice, cada uno en su puerto. Para desarrollar la SPA con
+  # 'npm run dev', que tambien usa el 4200 (es el redirect URI de su cliente), parese antes este
+  # contenedor: 'docker compose stop frontend'.
   #
   # Sin depends_on a proposito: el gateway esta en otro perfil y un depends_on obligatorio rompe
   # 'docker compose --profile frontend config'. nginx resuelve el gateway en cada peticion, asi que
@@ -552,7 +558,7 @@ services:
     build:
       context: ../mto-frontend
     container_name: mto-frontend
-    profiles: [frontend]
+    profiles: [all, frontend]
     restart: unless-stopped
     environment:
       # El realm tal como lo ve el navegador (el 'iss' de los tokens).
@@ -563,7 +569,7 @@ services:
       # 'npm run dev', que llega al gateway del host.
       MTO_GATEWAY_URL: http://gateway:8090
       MTO_ENVIRONMENT: local
-      # Las pantallas que aun no han llegado enlazan a la misma ruta del backoffice.
+      # 'Abrir en el backoffice', en la barra, lleva a la misma pantalla en el backoffice.
       MTO_BACKOFFICE_URL: ${MTO_BACKOFFICE_PUBLIC_URL:-http://localhost:8085}
     ports:
       # 4200 no es libre: es el redirect URI del cliente mto-frontend en el realm. Ni a la vez que

@@ -16,3 +16,5 @@ __pycache__/
 ### SO ###
 .DS_Store
 Thumbs.db
+# Lo que deja scripts/e2e.sh cuando falla: el estado y los logs de compose.
+e2e-output/

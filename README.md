@@ -420,10 +420,12 @@ de los tres.
    `mto-frontend/playwright-report` y las trazas de lo que falle, en `mto-frontend/test-results`.
 
 Si algo falla, el estado y los logs de compose quedan en `e2e-output/` (el CI los sube en el artefacto
-`e2e-report`, junto al informe) y la plataforma se queda levantada para mirarla. En local hace falta
-Docker, Node 22 y la plataforma parada: el guion la levanta con las imagenes de cada commit. No hace
-falta tocar `/etc/hosts`: el navegador de Playwright resuelve `auth.mto.local` por su cuenta y las
-pruebas piden sus tokens a `localhost`.
+`e2e-report`, junto al informe) y la plataforma se queda levantada para mirarla. El propio log dice
+ademas lo que hace falta para entenderlo sin bajarse el artefacto, cada cosa en su grupo: la pagina de
+cada prueba que ha fallado (su `error-context.md`, con el error y lo que ensenaba la pantalla) y las
+ultimas 200 lineas de cada aplicacion. En local hace falta Docker, Node 22 y la plataforma parada: el
+guion la levanta con las imagenes de cada commit. No hace falta tocar `/etc/hosts`: el navegador de
+Playwright resuelve `auth.mto.local` por su cuenta y las pruebas piden sus tokens a `localhost`.
 
 `scripts/smoke_notification.sh` sigue siendo manual: su peor caso ronda los 25 minutos y pide diez
 entre pasadas.

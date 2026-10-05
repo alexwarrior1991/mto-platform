@@ -25,7 +25,9 @@
 #
 # Si algo falla, el estado y los logs de compose quedan en $E2E_OUTPUT (por defecto
 # mto-platform/e2e-output), que el CI sube junto al informe, y la plataforma se queda levantada
-# para mirarla. Sin reintentos: un fallo se diagnostica.
+# para mirarla. El propio log dice ademas lo que hace falta para entenderlo sin bajarse nada: la
+# pagina de cada prueba que ha fallado y las ultimas lineas de cada aplicacion, cada cosa en su
+# grupo plegado en el CI. Sin reintentos: un fallo se diagnostica.
 #
 # El navegador llega a Keycloak (auth.mto.local) por los --host-resolver-rules de Playwright y las
 # pruebas piden sus tokens a localhost: no hace falta tocar /etc/hosts.
@@ -42,12 +44,52 @@ OWNER=alexwarrior1991
 APPS=(configuration stock maintenance users notification gateway backoffice frontend)
 INFRA=(postgres redis rabbitmq keycloak jaeger mailpit)
 
+# Un bloque del log: plegado en el de GitHub Actions y con su cabecera en local. Lo de dentro son
+# datos (paginas y logs, con lo que escribieron las pruebas): en el CI va entre stop-commands, para
+# que ninguna linea que empiece por :: se lea como un comando del runner.
+abrir_grupo() {
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    PAUSA="e2e-$RANDOM$RANDOM$RANDOM"
+    echo "::group::$1"
+    echo "::stop-commands::$PAUSA"
+  else
+    echo "=== $1"
+  fi
+}
+
+cerrar_grupo() {
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::$PAUSA::"
+    echo "::endgroup::"
+  fi
+}
+
+# Lo que se ve de un fallo sin bajarse el artefacto: la pagina de cada prueba que ha fallado (el
+# error-context.md que deja Playwright: el error y la instantanea de accesibilidad de la pagina) y
+# las ultimas lineas de cada aplicacion.
+contar_el_fallo() {
+  local resultados="$HERMANOS/mto-frontend/test-results" fichero app
+  if [[ -d "$resultados" ]]; then
+    while IFS= read -r -d '' fichero; do
+      abrir_grupo "La pagina al fallar: $(basename "$(dirname "$fichero")")"
+      head -n 400 "$fichero"
+      cerrar_grupo
+    done < <(find "$resultados" -name error-context.md -print0 | sort -z)
+  fi
+  for app in "${APPS[@]}"; do
+    abrir_grupo "Las ultimas lineas de mto-$app"
+    (cd "$PLATAFORMA" && docker compose --profile all logs --no-color --tail 200 "$app") 2>&1 || true
+    cerrar_grupo
+  done
+}
+
 al_salir() {
   local estado=$?
   if [[ $estado -ne 0 && -f "$PLATAFORMA/.env" ]]; then
     mkdir -p "$OUTPUT"
     (cd "$PLATAFORMA" && docker compose --profile all ps -a) > "$OUTPUT/compose-ps.txt" 2>&1 || true
     (cd "$PLATAFORMA" && docker compose --profile all logs --no-color --timestamps) > "$OUTPUT/compose.log" 2>&1 || true
+    contar_el_fallo || true
     echo "Ha fallado (salida $estado). El estado y los logs de la plataforma estan en $OUTPUT" >&2
   fi
 }

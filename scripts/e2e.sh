@@ -88,13 +88,24 @@ set -a
 source .env
 set +a
 
+# Si GHCR tiene esa etiqueta: el registro responde 200 a la peticion del manifiesto, con un token
+# anonimo (las imagenes son publicas). Solo pregunta; no descarga nada.
+publicada() { # imagen (sin el registro) y etiqueta
+  local token
+  token="$(curl -fsS "https://ghcr.io/token?scope=repository:$1:pull" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"], end="")')" || return 1
+  curl -fs -o /dev/null -I -H "Authorization: Bearer $token" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+    "https://ghcr.io/v2/$1/manifests/$2"
+}
+
 PUBLICADAS=()
 for app in "${APPS[@]}"; do
   imagen="ghcr.io/$OWNER/mto-$app"
   # La etiqueta que pone docker/metadata-action (type=sha,format=short): los siete primeros.
   sha="$(git -C "$HERMANOS/mto-$app" rev-parse HEAD | cut -c1-7)"
   variable="MTO_$(tr '[:lower:]' '[:upper:]' <<< "$app")_TAG"
-  if docker manifest inspect "$imagen:sha-$sha" > /dev/null 2>&1; then
+  if publicada "$OWNER/mto-$app" "sha-$sha"; then
     export "$variable=sha-$sha"
     PUBLICADAS+=("$app")
     echo "mto-$app: la imagen publicada $imagen:sha-$sha"

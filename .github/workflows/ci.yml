@@ -144,12 +144,13 @@ jobs:
           done
           echo "Perfiles correctos"
 
-      - name: Check the assembly script
+      - name: Check the scripts
         working-directory: mto-platform
         run: |
           bash -n keycloak/apply-partials.sh
+          bash -n scripts/e2e.sh
           sudo apt-get install -y --no-install-recommends shellcheck >/dev/null 2>&1 || true
-          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh || true
+          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh scripts/e2e.sh || true
 
       # Lo de arriba lee los ficheros; lo que Keycloak hace con ellos solo se ve aplicandolos. Una
       # importacion parcial con OVERWRITE sustituye el cliente entero, y los ficheros de desarrollo

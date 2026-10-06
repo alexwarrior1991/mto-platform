@@ -25,9 +25,10 @@
 #
 # Si algo falla, el estado y los logs de compose quedan en $E2E_OUTPUT (por defecto
 # mto-platform/e2e-output), que el CI sube junto al informe, y la plataforma se queda levantada
-# para mirarla. El propio log dice ademas lo que hace falta para entenderlo sin bajarse nada: la
-# pagina de cada prueba que ha fallado y las ultimas lineas de cada aplicacion, cada cosa en su
-# grupo plegado en el CI. Sin reintentos: un fallo se diagnostica.
+# para mirarla; la salida de cada imagen construida queda alli tambien. El propio log dice ademas lo
+# que hace falta para entenderlo sin bajarse nada: por que no se ha construido una imagen, la pagina
+# de cada prueba que ha fallado y las ultimas lineas de cada aplicacion, cada cosa en su grupo
+# plegado en el CI. Sin reintentos: un fallo se diagnostica.
 #
 # El navegador llega a Keycloak (auth.mto.local) por los --host-resolver-rules de Playwright y las
 # pruebas piden sus tokens a localhost: no hace falta tocar /etc/hosts.
@@ -141,6 +142,22 @@ publicada() { # imagen (sin el registro) y etiqueta
     "https://ghcr.io/v2/$1/manifests/$2"
 }
 
+# La imagen de una aplicacion desde su checkout. La salida entera de docker build queda en
+# $OUTPUT/build-mto-<app>.log (el CI la sube con el resto) y, si falla, sus ultimas lineas salen en el
+# log en su grupo: con --quiet solo se veia el paso que habia fallado, no por que (una descarga de
+# Maven o de npm caida, por ejemplo).
+construir() { # app e imagen con su etiqueta
+  local salida="$OUTPUT/build-mto-$1.log"
+  mkdir -p "$OUTPUT"
+  if ! docker build --progress plain --tag "$2" "$HERMANOS/mto-$1" > "$salida" 2>&1; then
+    abrir_grupo "Por que no se construye mto-$1: las ultimas lineas de docker build"
+    tail -n 80 "$salida"
+    cerrar_grupo
+    echo "mto-$1: no se ha podido construir la imagen; la salida entera esta en $salida" >&2
+    return 1
+  fi
+}
+
 PUBLICADAS=()
 for app in "${APPS[@]}"; do
   imagen="ghcr.io/$OWNER/mto-$app"
@@ -153,7 +170,7 @@ for app in "${APPS[@]}"; do
     echo "mto-$app: la imagen publicada $imagen:sha-$sha"
   else
     echo "mto-$app: sin imagen publicada para $sha; se construye desde el checkout"
-    docker build --quiet --tag "$imagen:e2e" "$HERMANOS/mto-$app" > /dev/null
+    construir "$app" "$imagen:e2e"
     export "$variable=e2e"
   fi
 done

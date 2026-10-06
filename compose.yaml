@@ -253,6 +253,14 @@ services:
       KEYCLOAK_CLIENT_ID: mto-configuration-api
       KEYCLOAK_AUDIENCE: mto-configuration-api
       KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      # Los ficheros de los trabajos: el CSV de una exportacion y el informe de una importacion. Por
+      # defecto son rutas relativas al directorio de trabajo de la imagen (/app), que es de root, y el
+      # usuario con el que corre no puede crear nada alli: el trabajo terminaba sin su fichero y
+      # descargarlo fallaba. Donde dejarlos es configuracion del entorno; aqui, /tmp del contenedor.
+      # Se pierden al recrearlo, y el servicio responde entonces 410: hay que relanzar el trabajo.
+      APP_JOBS_PROFILE_EXPORT_DIRECTORY: /tmp/mto-configuration/exports
+      APP_JOBS_PROFILE_IMPORT_REPORT_DIRECTORY: /tmp/mto-configuration/profile-imports
+      APP_JOBS_LOV_REPORT_DIRECTORY: /tmp/mto-configuration/lov-imports
     extra_hosts:
       - "auth.mto.local:host-gateway"
       - "otel.mto.local:host-gateway"

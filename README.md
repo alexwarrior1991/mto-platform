@@ -185,7 +185,8 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u TU_USUARIO --password-stdin
 ```
 
 Para probar un cambio sin publicar, construye la imagen en el repositorio del servicio y pon su
-etiqueta en `MTO_<SERVICIO>_TAG`.
+etiqueta en `MTO_<SERVICIO>_TAG`. Es lo que hace `scripts/e2e.sh` (abajo) con cada commit que no
+tiene imagen publicada.
 
 ## El realm
 
@@ -391,6 +392,46 @@ Toca datos de verdad, con nombres que se reconocen: el tramo `SMOKE-NOTIF` de ma
 una orden urgente cancelada, un material `SMOKE-<fecha>` retirado y sus avisos y correos. Con todo bien
 termina en `47 comprobaciones bien, 0 mal.`; entre dos pasadas conviene dejar diez minutos, porque el
 paso 8 espera exactamente una racha de `config.lector` en ese tiempo.
+
+### Y las dos aplicaciones, de punta a punta, como en el CI
+
+```bash
+scripts/e2e.sh
+```
+
+Corre las pruebas de navegador de `mto-frontend` (`e2e/`, Playwright) contra la plataforma entera, con
+los dos frontales: cada pantalla contra su servicio de verdad, el SSO compartido y el enlace entre las
+dos aplicaciones («Abrir en el backoffice» y vuelta, con la misma ruta y sus filtros). Es lo que hace
+el job `e2e` del CI de este repositorio (tras el del realm: en cada PR, en `master`, en la pasada
+semanal y a mano) y el de los CI de `mto-frontend` y `mto-backoffice`, de modo que un cambio
+coordinado (el guion, las pruebas y las aplicaciones en la misma rama) se prueba junto en cualquiera
+de los tres.
+
+1. Clona en superficial, al lado de este repositorio, los hermanos que falten: en la misma rama si la
+   tienen y si no en `master`, como el job del realm. Los que ya esten se usan tal cual.
+2. Usa para cada aplicacion la imagen que su CI publico para ese commit (`sha-<7>` en GHCR) o, si no
+   existe (una rama de trabajo, el commit de un PR), la construye desde el checkout con la etiqueta
+   `e2e`; `MTO_<APP>_TAG` le dice a compose cual. La salida de cada construccion queda en
+   `e2e-output/build-mto-<app>.log`.
+3. Copia `.env.example` si no hay `.env`, levanta la infraestructura con `--wait`, ensambla el realm
+   con `apply-partials.sh`, levanta las aplicaciones y espera a que todas respondan (seis minutos como
+   mucho).
+4. Corre Playwright en `mto-frontend` con `CI=true`: mas margen por prueba, sin `test.only` y sin
+   reintentos, porque un fallo se diagnostica y no se repite. El informe queda en
+   `mto-frontend/playwright-report` y las trazas de lo que falle, en `mto-frontend/test-results`.
+
+Si algo falla, el estado y los logs de compose quedan en `e2e-output/` (el CI los sube en el artefacto
+`e2e-report`, junto al informe) y la plataforma se queda levantada para mirarla. El propio log dice
+ademas lo que hace falta para entenderlo sin bajarse el artefacto, cada cosa en su grupo: por que no se
+ha construido una imagen (las ultimas 80 lineas de su `docker build`: una descarga de Maven o de npm
+caida, por ejemplo), la pagina de cada prueba que ha fallado (su `error-context.md`, con el error y lo
+que ensenaba la pantalla) y las ultimas 200 lineas de cada aplicacion. En local hace falta Docker,
+Node 22 y la plataforma parada: el guion la levanta con las imagenes de cada commit. No hace falta
+tocar `/etc/hosts`: el navegador de Playwright resuelve `auth.mto.local` por su cuenta y las pruebas
+piden sus tokens a `localhost`.
+
+`scripts/smoke_notification.sh` sigue siendo manual: su peor caso ronda los 25 minutos y pide diez
+entre pasadas.
 
 ## Parar
 

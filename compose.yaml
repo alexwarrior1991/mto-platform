@@ -381,11 +381,13 @@ services:
   # La consola en directo del bloqueo de via: un servidor gRPC (9090 dentro, 9094 en el host) al que
   # los dispositivos de los equipos y el responsable llegan DIRECTAMENTE. El gateway no participa:
   # es HTTP y no hace de proxy gRPC. Actuator sigue por HTTP (8080 dentro, 8087 en el host).
-  # LLAMA a mto-maintenance para leer los turnos de una posesion y contar el inicio y el fin de cada
-  # tarea, con la cuenta de servicio mto-field-svc (sus roles maintenance-read y maintenance-write
-  # los concede apply-partials.sh). Sin mto-maintenance arranca igual: el evento queda FAILED y se
-  # reintenta. Sin depends_on de maintenance a proposito: esta en otro perfil, y un depends_on
-  # obligatorio rompe 'docker compose --profile field config'.
+  # LLAMARA a mto-maintenance (fase 2 de mto-field) para leer los turnos de una posesion y contar
+  # el inicio y el fin de cada tarea, con la cuenta de servicio mto-field-svc (sus roles
+  # maintenance-read y maintenance-write los concede apply-partials.sh). Hasta entonces el cliente
+  # va apagado (MTO_FIELD_MAINTENANCE_ENABLED=false): cualquier id de turno vale y el servicio
+  # inventa el equipo; con true, mto-field se niega a arrancar hasta que exista el cliente REST.
+  # Sin depends_on de maintenance a proposito: esta en otro perfil, y un depends_on obligatorio
+  # rompe 'docker compose --profile field config'.
   #
   # Lleva 'build' ademas de 'image', como el backoffice: hasta que su CI publique la imagen en GHCR,
   # compose la construye desde el checkout hermano (../mto-field).
@@ -406,7 +408,8 @@ services:
       SPRING_FLYWAY_ENABLED: "true"
       # mto-maintenance por nombre de servicio: los dos corren en esta red. Si se arranca desde el
       # IDE, apuntese al host (MTO_MAINTENANCE_URL=http://host.docker.internal:8083 en .env).
-      APP_MAINTENANCE_ENABLED: "true"
+      # El interruptor se pone a true en la fase 2 de mto-field, cuando exista su cliente REST.
+      APP_MAINTENANCE_ENABLED: ${MTO_FIELD_MAINTENANCE_ENABLED:-false}
       MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
       # La cuenta de servicio pide su token al mismo emisor que valida los de los usuarios.
       KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token

@@ -42,7 +42,7 @@ OUTPUT="${E2E_OUTPUT:-$PLATAFORMA/e2e-output}"
 OWNER=alexwarrior1991
 # Las aplicaciones de la plataforma: el sufijo del repositorio, el del servicio de compose y el de
 # su imagen (mto-<app>).
-APPS=(configuration stock maintenance users notification gateway backoffice frontend)
+APPS=(configuration stock maintenance users notification field gateway backoffice frontend)
 INFRA=(postgres redis rabbitmq keycloak jaeger mailpit)
 
 # Un bloque del log: plegado en el de GitHub Actions y con su cabecera en local. Lo de dentro son
@@ -190,6 +190,7 @@ SONDAS=(
   "mto-maintenance http://localhost:${MTO_MAINTENANCE_PORT:-8083}/actuator/health"
   "mto-users http://localhost:${MTO_USERS_PORT:-8084}/actuator/health"
   "mto-notification http://localhost:${MTO_NOTIFICATION_PORT:-8086}/actuator/health"
+  "mto-field http://localhost:${MTO_FIELD_PORT:-8087}/actuator/health"
   "mto-gateway http://localhost:${MTO_GATEWAY_PORT:-8090}/actuator/health"
   "mto-backoffice http://localhost:${MTO_BACKOFFICE_PORT:-8085}/actuator/health"
   "mto-frontend http://localhost:${MTO_FRONTEND_PORT:-4200}/healthz"

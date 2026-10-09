@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprueba que las piezas del realm 'mto' repartidas por los ocho repositorios encajan.
+"""Comprueba que las piezas del realm 'mto' repartidas por los nueve repositorios encajan.
 
 Los ficheros de keycloak/ no los compila nadie: un error en ellos no se descubre hasta que alguien
 levanta el stack o, peor, hasta que se importa en un entorno. Y desde que el realm se ensambla a
@@ -12,7 +12,7 @@ repositorio. Solo libreria estandar: este es un repositorio de composes y no se 
 Uso:
     python3 scripts/check_realm_consistency.py [--repos DIR]
 
-DIR es el directorio que contiene los ocho repositorios como hermanos (por defecto, el padre de
+DIR es el directorio que contiene los nueve repositorios como hermanos (por defecto, el padre de
 este repositorio).
 """
 
@@ -29,6 +29,7 @@ CLIENTES_API = (
     "mto-maintenance-api",
     "mto-users-api",
     "mto-notification-api",
+    "mto-field-api",
 )
 
 # Los eventos de acceso que mto-notification necesita leer del realm. Sin LOGIN y LOGIN_ERROR no
@@ -98,7 +99,7 @@ def leer(ruta):
     if not ruta.is_file():
         raise SystemExit(
             f"No se encuentra {ruta}.\n"
-            "Los siete repositorios tienen que estar como hermanos en el mismo directorio; "
+            "Los ocho repositorios tienen que estar como hermanos en el mismo directorio; "
             "usese --repos para indicar otro."
         )
     with ruta.open(encoding="utf-8") as f:
@@ -486,7 +487,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los ocho repositorios como hermanos.",
+        help="Directorio que contiene los nueve repositorios como hermanos.",
     )
     args = parser.parse_args()
 
@@ -507,6 +508,7 @@ def main():
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
         ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
         ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
+        ("mto-field-partial-import.json", leer(raiz / "mto-field" / "keycloak" / "mto-field-partial-import.json")),
         ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
         ("mto-notification-dev.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json")),
@@ -514,6 +516,7 @@ def main():
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
         ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
         ("mto-users-dev.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-dev.json")),
+        ("mto-field-dev.json", leer(raiz / "mto-field" / "keycloak" / "mto-field-dev.json")),
         ("mto-backoffice-dev.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-dev.json")),
     ]
     # Las parciales que crean clientes y permisos: todo lo que va ANTES del perfil cruzado.

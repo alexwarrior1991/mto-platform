@@ -1,4 +1,4 @@
--- Las cuatro bases del dominio en un unico servidor.
+-- Las cinco bases del dominio en un unico servidor.
 --
 -- El contenedor de PostgreSQL ejecuta los ficheros de /docker-entrypoint-initdb.d SOLO en la
 -- primera inicializacion, cuando el directorio de datos esta vacio. Si se cambia algo de aqui
@@ -26,6 +26,9 @@
 \getenv notification_db     MTO_NOTIFICATION_DB
 \getenv notification_user   MTO_NOTIFICATION_USER
 \getenv notification_pass   MTO_NOTIFICATION_PASSWORD
+\getenv field_db            MTO_FIELD_DB
+\getenv field_user          MTO_FIELD_USER
+\getenv field_pass          MTO_FIELD_PASSWORD
 
 -- mto-configuration ------------------------------------------------------------------------------
 
@@ -72,12 +75,25 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'notification_db', :'notification_
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'notification_db')
 \gexec
 
+-- mto-field --------------------------------------------------------------------------------------
+--
+-- Anadida despues de las otras cuatro, como la de mto-notification: sobre un volumen ya inicializado
+-- hay que pasarle este fichero a psql dentro del contenedor (vease README.md).
+
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'field_user', :'field_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'field_user')
+\gexec
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'field_db', :'field_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'field_db')
+\gexec
+
 -- El esquema de mto-configuration ------------------------------------------------------------
 --
 -- Flyway esta configurado con default-schema y schemas y sabe crearlo, pero necesita privilegios
 -- sobre la base entera para ello. Se crea aqui con el dueño correcto para no tener que darselos.
--- mto-stock, mto-maintenance y mto-notification usan el esquema public de su propia base y no
--- necesitan nada equivalente.
+-- mto-stock, mto-maintenance, mto-notification y mto-field usan el esquema public de su propia base
+-- y no necesitan nada equivalente.
 
 \connect :configuration_db
 

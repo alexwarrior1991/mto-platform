@@ -11,6 +11,7 @@
 #   docker compose --profile backoffice --profile gateway up -d      # el backoffice y el gateway al que llama
 #   docker compose --profile frontend --profile gateway up -d        # la SPA y el gateway al que llama
 #   docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
+#   docker compose --profile maintenance --profile field up -d     # la consola en directo del bloqueo de via (gRPC) y el mantenimiento al que llama
 #
 # El caso habitual de desarrollo es levantar todo, parar el servicio que se va a tocar y
 # arrancarlo desde el IDE contra esta misma infraestructura. Por eso Keycloak y el colector OTLP
@@ -28,7 +29,7 @@ services:
   # Infraestructura. Sin 'profiles': arranca siempre.
   # ---------------------------------------------------------------------------------------------
 
-  # Un unico servidor para las cuatro bases de datos. Los usuarios y las bases los crea
+  # Un unico servidor para las cinco bases de datos. Los usuarios y las bases los crea
   # postgres/init/01-databases.sql, que el contenedor ejecuta en la PRIMERA inicializacion.
   postgres:
     image: postgres:17-alpine
@@ -53,6 +54,9 @@ services:
       MTO_NOTIFICATION_DB: ${MTO_NOTIFICATION_DB:-mto_notification}
       MTO_NOTIFICATION_USER: ${MTO_NOTIFICATION_USER:-mto_notification_user}
       MTO_NOTIFICATION_PASSWORD: ${MTO_NOTIFICATION_PASSWORD:?falta en .env, copiese .env.example}
+      MTO_FIELD_DB: ${MTO_FIELD_DB:-mto_field}
+      MTO_FIELD_USER: ${MTO_FIELD_USER:-mto_field_user}
+      MTO_FIELD_PASSWORD: ${MTO_FIELD_PASSWORD:?falta en .env, copiese .env.example}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -372,6 +376,58 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+
+  # La consola en directo del bloqueo de via: un servidor gRPC (9090 dentro, 9094 en el host) al que
+  # los dispositivos de los equipos y el responsable llegan DIRECTAMENTE. El gateway no participa:
+  # es HTTP y no hace de proxy gRPC. Actuator sigue por HTTP (8080 dentro, 8087 en el host).
+  # LLAMA a mto-maintenance para leer los turnos de una posesion y contar el inicio y el fin de cada
+  # tarea, con la cuenta de servicio mto-field-svc (sus roles maintenance-read y maintenance-write
+  # los concede apply-partials.sh). Sin mto-maintenance arranca igual: el evento queda FAILED y se
+  # reintenta. Sin depends_on de maintenance a proposito: esta en otro perfil, y un depends_on
+  # obligatorio rompe 'docker compose --profile field config'.
+  #
+  # Lleva 'build' ademas de 'image', como el backoffice: hasta que su CI publique la imagen en GHCR,
+  # compose la construye desde el checkout hermano (../mto-field).
+  field:
+    image: ghcr.io/alexwarrior1991/mto-field:${MTO_FIELD_TAG:-latest}
+    build:
+      context: ../mto-field
+    container_name: mto-field
+    profiles: [all, field]
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${MTO_FIELD_SPRING_PROFILE:-prod}
+      SERVER_PORT: 8080
+      SPRING_GRPC_SERVER_PORT: 9090
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_FIELD_DB:-mto_field}
+      DATABASE_USERNAME: ${MTO_FIELD_USER:-mto_field_user}
+      DATABASE_PASSWORD: ${MTO_FIELD_PASSWORD:?falta en .env, copiese .env.example}
+      SPRING_FLYWAY_ENABLED: "true"
+      # mto-maintenance por nombre de servicio: los dos corren en esta red. Si se arranca desde el
+      # IDE, apuntese al host (MTO_MAINTENANCE_URL=http://host.docker.internal:8083 en .env).
+      APP_MAINTENANCE_ENABLED: "true"
+      MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
+      # La cuenta de servicio pide su token al mismo emisor que valida los de los usuarios.
+      KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
+      KEYCLOAK_SERVICE_CLIENT_ID: mto-field-svc
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_FIELD_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+      KEYCLOAK_CLIENT_ID: mto-field-api
+      KEYCLOAK_AUDIENCE: mto-field-api
+      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      # La reflexion es lo que usa grpcurl para listar el servicio; en local se deja encendida.
+      SPRING_GRPC_SERVER_REFLECTION_ENABLED: ${MTO_FIELD_GRPC_REFLECTION_ENABLED:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_FIELD_PORT:-8087}:8080"
+      - "${MTO_FIELD_GRPC_PORT:-9094}:9090"
+    depends_on:
+      postgres: {condition: service_healthy}
       keycloak: {condition: service_healthy}
 
   # Administracion de usuarios, roles y perfiles del realm por la Admin API de Keycloak, con la

@@ -37,6 +37,10 @@
               "notification-admin",
               "ops-metrics",
               "ops-write"
+            ],
+            "mto-field-api": [
+              "ops-metrics",
+              "ops-write"
             ]
           }
         }

@@ -8,7 +8,7 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los seis, asi que va DESPUES de las parciales que los crean; y la
+# mto-ops-cross-service.json nombra los siete, asi que va DESPUES de las parciales que los crean; y la
 # de mto-notification va la PRIMERA, porque los perfiles de los demas nombraran sus permisos.
 # Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
 #
@@ -16,7 +16,7 @@
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los siete repositorios de servicio como hermanos en el mismo directorio.
+# Espera los ocho repositorios de servicio como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -47,8 +47,10 @@ FICHEROS=(
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
+  # La consola de campo (gRPC): su cuenta de servicio nombra mto-maintenance-api, que ya existe.
+  "$HERMANOS/mto-field/keycloak/mto-field-partial-import.json"
   # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
-  # audience mapper hacia los seis API: no declara roles, comprueba los de mto-configuration-api.
+  # audience mapper hacia los siete API: no declara roles, comprueba los de mto-configuration-api.
   "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
@@ -63,6 +65,7 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
     "$HERMANOS/mto-stock/keycloak/mto-stock-dev.json"
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
     "$HERMANOS/mto-users/keycloak/mto-users-dev.json"
+    "$HERMANOS/mto-field/keycloak/mto-field-dev.json"
     "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-dev.json"
   )
 fi
@@ -78,7 +81,7 @@ for fichero in "${FICHEROS[@]}" ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los ocho repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los nueve repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 
@@ -290,6 +293,11 @@ json.dump(roles, sys.stdout)
 }
 
 conceder_roles_de_servicio mto-maintenance-svc mto-stock-api stock-read stock-write
+
+# mto-field lee los turnos de una posesion y cuenta el inicio y el fin de cada tarea a mto-maintenance
+# con su propia cuenta de servicio: lectura y escritura ordinaria, nada de maintenance-delete ni de
+# maintenance-supervise.
+conceder_roles_de_servicio mto-field-svc mto-maintenance-api maintenance-read maintenance-write
 
 # mto-users administra usuarios, roles y perfiles del realm por la Admin API con SU PROPIA cuenta de
 # servicio (nada del realm master). realm-management es un cliente mas del realm, asi que la misma

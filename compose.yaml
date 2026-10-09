@@ -23,6 +23,41 @@
 # nada daba error. Es el motivo principal de que exista este fichero.
 name: mto-platform
 
+# Lo que comparten las replicas de mto-field (fase 4: varias replicas, una posesion repartida
+# entre ellas y el tablero desde cualquiera). Cada servicio pone encima su APP_FIELD_REPLICAS_ID.
+x-field-environment: &field-environment
+  SPRING_PROFILES_ACTIVE: ${MTO_FIELD_SPRING_PROFILE:-prod}
+  SERVER_PORT: 8080
+  SPRING_GRPC_SERVER_PORT: 9090
+  DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_FIELD_DB:-mto_field}
+  DATABASE_USERNAME: ${MTO_FIELD_USER:-mto_field_user}
+  DATABASE_PASSWORD: ${MTO_FIELD_PASSWORD:?falta en .env, copiese .env.example}
+  SPRING_FLYWAY_ENABLED: "true"
+  # mto-maintenance por nombre de servicio: los dos corren en esta red. Si se arranca desde el
+  # IDE, apuntese al host (MTO_MAINTENANCE_URL=http://host.docker.internal:8083 en .env).
+  APP_MAINTENANCE_ENABLED: ${MTO_FIELD_MAINTENANCE_ENABLED:-true}
+  MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
+  # La cuenta de servicio pide su token al mismo emisor que valida los de los usuarios.
+  KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-field-svc
+  KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_FIELD_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
+  KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
+  KEYCLOAK_CLIENT_ID: mto-field-api
+  KEYCLOAK_AUDIENCE: mto-field-api
+  KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+  # La reflexion es lo que usa grpcurl para listar el servicio; en local se deja encendida.
+  SPRING_GRPC_SERVER_REFLECTION_ENABLED: ${MTO_FIELD_GRPC_REFLECTION_ENABLED:-true}
+  # El bus de replicas sobre el RabbitMQ de la plataforma: solo lleva lo que no esta en la base
+  # (quien esta conectado a que replica, latidos, hasta donde se ha escrito). Con false cada
+  # replica se entera de las demas por la base, en cada tic de puesta al dia.
+  APP_RABBITMQ_ENABLED: ${MTO_FIELD_RABBITMQ_ENABLED:-true}
+  SPRING_RABBITMQ_HOST: rabbitmq
+  SPRING_RABBITMQ_PORT: 5672
+  SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
+  SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
+  SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+
 services:
 
   # ---------------------------------------------------------------------------------------------
@@ -399,28 +434,8 @@ services:
     profiles: [all, field]
     restart: unless-stopped
     environment:
-      SPRING_PROFILES_ACTIVE: ${MTO_FIELD_SPRING_PROFILE:-prod}
-      SERVER_PORT: 8080
-      SPRING_GRPC_SERVER_PORT: 9090
-      DATABASE_URL: jdbc:postgresql://postgres:5432/${MTO_FIELD_DB:-mto_field}
-      DATABASE_USERNAME: ${MTO_FIELD_USER:-mto_field_user}
-      DATABASE_PASSWORD: ${MTO_FIELD_PASSWORD:?falta en .env, copiese .env.example}
-      SPRING_FLYWAY_ENABLED: "true"
-      # mto-maintenance por nombre de servicio: los dos corren en esta red. Si se arranca desde el
-      # IDE, apuntese al host (MTO_MAINTENANCE_URL=http://host.docker.internal:8083 en .env).
-      APP_MAINTENANCE_ENABLED: ${MTO_FIELD_MAINTENANCE_ENABLED:-true}
-      MTO_MAINTENANCE_URL: ${MTO_MAINTENANCE_URL:-http://maintenance:8080}
-      # La cuenta de servicio pide su token al mismo emisor que valida los de los usuarios.
-      KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
-      KEYCLOAK_SERVICE_CLIENT_ID: mto-field-svc
-      KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_FIELD_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel.mto.local:4318/v1/traces}
-      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}
-      KEYCLOAK_CLIENT_ID: mto-field-api
-      KEYCLOAK_AUDIENCE: mto-field-api
-      KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
-      # La reflexion es lo que usa grpcurl para listar el servicio; en local se deja encendida.
-      SPRING_GRPC_SERVER_REFLECTION_ENABLED: ${MTO_FIELD_GRPC_REFLECTION_ENABLED:-true}
+      <<: *field-environment
+      APP_FIELD_REPLICAS_ID: field-1
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "auth.mto.local:host-gateway"
@@ -431,6 +446,33 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       keycloak: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  # La segunda replica de mto-field, solo con --profile field-cluster (ademas de field): misma base,
+  # mismo broker, otro nombre y otros puertos. Los dispositivos pueden conectarse a cualquiera de
+  # las dos y el responsable mirar el tablero desde cualquiera; el simulador las reparte con
+  # --target localhost:9094,localhost:9095.
+  field-2:
+    image: ghcr.io/alexwarrior1991/mto-field:${MTO_FIELD_TAG:-latest}
+    build:
+      context: ../mto-field
+    container_name: mto-field-2
+    profiles: [field-cluster]
+    restart: unless-stopped
+    environment:
+      <<: *field-environment
+      APP_FIELD_REPLICAS_ID: field-2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.mto.local:host-gateway"
+      - "otel.mto.local:host-gateway"
+    ports:
+      - "${MTO_FIELD_2_PORT:-8088}:8080"
+      - "${MTO_FIELD_2_GRPC_PORT:-9095}:9090"
+    depends_on:
+      postgres: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
 
   # Administracion de usuarios, roles y perfiles del realm por la Admin API de Keycloak, con la
   # cuenta de servicio mto-users-svc (sus roles de realm-management los concede apply-partials.sh).

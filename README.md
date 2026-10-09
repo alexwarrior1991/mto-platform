@@ -120,12 +120,12 @@ punta a punta lo que ya esta en el stack.
 `mto-field` (la consola en directo del bloqueo de via) tiene el perfil `field` y su propia base en el
 mismo Postgres. Es un servidor **gRPC**: los dispositivos de los equipos y el responsable llegan
 directamente a su puerto (9094 en el host), porque el gateway es HTTP y no hace de proxy gRPC;
-Actuator sigue por HTTP (8087). Llamara a `mto-maintenance` (fase 2 de `mto-field`) para leer los
-turnos de una posesion y contar el inicio y el fin de cada tarea con su cuenta de servicio
-`mto-field-svc` (`maintenance-read` y `maintenance-write`, paso 8). Hasta entonces el cliente va
-apagado (`MTO_FIELD_MAINTENANCE_ENABLED=false` en `.env.example`): cualquier id de turno abre una
-posesion y el servicio inventa el equipo; con `true`, `mto-field` se niega a arrancar hasta que
-exista su cliente REST. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta
+Actuator sigue por HTTP (8087). Llama a `mto-maintenance` para leer los turnos de una posesion y
+contarle el inicio y el fin de cada tarea con su cuenta de servicio `mto-field-svc`
+(`maintenance-read` y `maintenance-write`, paso 8), asi que se levanta junto con el perfil
+`maintenance`. Con `MTO_FIELD_MAINTENANCE_ENABLED=false` el cliente va apagado: cualquier id de
+turno abre una posesion, el servicio inventa el equipo y las tareas quedan pendientes, que es como
+se prueba el canal sin mantenimiento. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta
 que su CI la publique en GHCR. La reflexion gRPC (`grpcurl -plaintext localhost:9094 list`) se deja
 encendida en local.
 

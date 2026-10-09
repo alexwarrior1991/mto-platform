@@ -57,6 +57,7 @@ CAMPOS_LISTA = ("redirectUris", "webOrigins")
 # El mismo reparto que las llamadas a conceder_roles_de_servicio. Si cambia alli, cambia aqui.
 ROLES_DE_SERVICIO = {
     "mto-maintenance-svc": ("mto-stock-api", {"stock-read", "stock-write"}),
+    "mto-field-svc": ("mto-maintenance-api", {"maintenance-read", "maintenance-write"}),
     "mto-users-svc": (
         "realm-management",
         {"view-users", "query-users", "manage-users", "view-clients", "query-clients", "view-realm"},
@@ -88,6 +89,7 @@ def ficheros(raiz):
         raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json",
         raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json",
         raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json",
+        raiz / "mto-field" / "keycloak" / "mto-field-partial-import.json",
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json",
         plataforma / "mto-ops-cross-service.json",
     ]
@@ -97,6 +99,7 @@ def ficheros(raiz):
         raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json",
         raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json",
         raiz / "mto-users" / "keycloak" / "mto-users-dev.json",
+        raiz / "mto-field" / "keycloak" / "mto-field-dev.json",
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-dev.json",
     ]
     return parciales, desarrollo

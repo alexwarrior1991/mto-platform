@@ -127,6 +127,16 @@
             "access.token.claim": "true",
             "id.token.claim": "false"
           }
+        },
+        {
+          "name": "audiencia-mto-field-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-field-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ]
     }

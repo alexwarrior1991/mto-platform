@@ -127,7 +127,10 @@ contarle el inicio y el fin de cada tarea con su cuenta de servicio `mto-field-s
 turno abre una posesion, el servicio inventa el equipo y las tareas quedan pendientes, que es como
 se prueba el canal sin mantenimiento. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta
 que su CI la publique en GHCR. La reflexion gRPC (`grpcurl -plaintext localhost:9094 list`) se deja
-encendida en local.
+encendida en local. Un tecnico solo se une a un turno de su equipo: su parcial declara los grupos
+`EQ-NORTE` y `EQ-SUR` (un grupo se llama como el `code` del equipo en `mto-maintenance`),
+`campo.tecnico1` y `campo.tecnico2` estan en uno cada uno, y el mapper `grupos` de `mto-frontend`
+los pone en el access token; `campo.responsable` (`field-supervise`) actua por cualquier equipo.
 
 ### Trabajar sobre un servicio
 
@@ -210,7 +213,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 
 | paso | fichero | repositorio | que aporta |
 |---|---|---|---|
-| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, los eventos (abajo), `mto-frontend` (el cliente publico de la SPA: PKCE, con redirect, web origin y post-logout en `localhost:4200`) y el perfil de usuario |
+| 1 | `keycloak/mto-realm-local.json` | platform | crea el realm: ajustes, los eventos (abajo), `mto-frontend` (el cliente publico de la SPA: PKCE, con redirect, web origin y post-logout en `localhost:4200`, y el mapper `grupos`, que pone los grupos de la persona en el access token como `groups`, sin ruta: con el liga `mto-field` a cada tecnico con su equipo) y el perfil de usuario |
 | 1b | `mto-notification-partial-import.json` | notification | `mto-notification-api`, `mto-notification-svc`, sus permisos y los perfiles `mto-notification-*`. **La primera de las parciales**: los perfiles de los demas servicios nombraran `notification-inbox` (cada persona tiene su bandeja), y un compuesto solo puede nombrar roles de un cliente que ya exista |
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |

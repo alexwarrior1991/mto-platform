@@ -72,6 +72,7 @@ docker compose --profile backoffice --profile gateway up -d     # el backoffice 
 docker compose --profile frontend --profile gateway up -d       # la SPA y el gateway al que llama
 docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 docker compose --profile maintenance --profile field up -d     # la consola en directo del bloqueo de via (gRPC) y el mantenimiento al que llama
+docker compose --profile maintenance --profile field --profile field-cluster up -d   # lo mismo con dos replicas de mto-field
 ```
 
 `mto-users` no tiene base de datos ni broker: administra usuarios, roles y perfiles del realm por
@@ -131,6 +132,13 @@ encendida en local. Un tecnico solo se une a un turno de su equipo: su parcial d
 `EQ-NORTE` y `EQ-SUR` (un grupo se llama como el `code` del equipo en `mto-maintenance`),
 `campo.tecnico1` y `campo.tecnico2` estan en uno cada uno, y el mapper `grupos` de `mto-frontend`
 los pone en el access token; `campo.responsable` (`field-supervise`) actua por cualquier equipo.
+Desde su fase 4 puede correr en varias replicas: `--profile field-cluster` levanta una segunda
+(`mto-field-2`, 8088 y gRPC 9095) sobre la misma base, y las dos se cuentan por el RabbitMQ de la
+plataforma lo que no esta en la base (quien esta conectado a cual, los latidos, hasta donde se ha
+escrito) en el exchange fanout `mto.field.replicas.exchange`, con una cola exclusiva por replica.
+La base sigue siendo la verdad: con `MTO_FIELD_RABBITMQ_ENABLED=false` las replicas se enteran igual,
+por su tic de puesta al dia. El simulador reparte los dispositivos entre las dos con
+`--target localhost:9094,localhost:9095` y el tablero se mira desde cualquiera.
 
 ### Trabajar sobre un servicio
 
@@ -166,6 +174,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 | `mto-backoffice` | 8085 |
 | `mto-notification` | 8086 |
 | `mto-field` | 8087 (Actuator; gRPC en 9094, sin pasar por el gateway) |
+| `mto-field` (segunda replica, perfil `field-cluster`) | 8088 (Actuator; gRPC en 9095) |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |

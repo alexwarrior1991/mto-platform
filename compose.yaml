@@ -57,6 +57,11 @@ x-field-environment: &field-environment
   SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
   SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?falta en .env, copiese .env.example}
   SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/}
+  # Desde su fase 5 mto-field publica lo que pasa en una posesion (abierta, cerrada, el desalojo y
+  # sus acuses, la via libre) por mto.field.exchange hacia mto-notification, firmado con el mismo
+  # secreto que los demas productores: con otro, mto-notification lo tomaria por una firma mala.
+  MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
+  MESSAGING_SIGNATURE_MODE: ${MESSAGING_SIGNATURE_MODE:-OPTIONAL}
 
 services:
 

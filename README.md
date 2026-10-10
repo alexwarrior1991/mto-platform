@@ -111,7 +111,8 @@ falta que ese servicio haya publicado algo.
 
 `mto-notification` (el registro de actividad y las notificaciones del dominio) tiene el perfil
 `notification` y su propia base en el mismo Postgres. Lo alimentan los eventos de los demas
-servicios por el broker y los eventos del propio realm, que lee por la Admin API de Keycloak con su
+servicios por el broker (desde su fase 5, tambien lo que `mto-field` cuenta de una posesion de via)
+y los eventos del propio realm, que lee por la Admin API de Keycloak con su
 cuenta de servicio `mto-notification-svc` (`view-events`, paso 8); el correo urgente lo manda a
 Mailpit (abajo). Su imagen lleva `build` ademas de `image`, como el backoffice: hasta que su CI la
 publique en GHCR, compose la construye desde `../mto-notification`. Que fuentes escucha y que
@@ -137,7 +138,12 @@ Desde su fase 4 puede correr en varias replicas: `--profile field-cluster` levan
 plataforma lo que no esta en la base (quien esta conectado a cual, los latidos, hasta donde se ha
 escrito) en el exchange fanout `mto.field.replicas.exchange`, con una cola exclusiva por replica.
 La base sigue siendo la verdad: con `MTO_FIELD_RABBITMQ_ENABLED=false` las replicas se enteran igual,
-por su tic de puesta al dia. El simulador reparte los dispositivos entre las dos con
+por su tic de puesta al dia. Desde su fase 5 publica ademas lo que pasa en una posesion (abierta y
+cerrada, el desalojo con sus acuses, el equipo que no acusa a tiempo, la via libre) por
+`mto.field.exchange` hacia `mto-notification`, firmado con el mismo `MESSAGING_SIGNATURE_SECRET`
+que los demas productores (otro secreto seria una firma mala y la DLQ), asi que `campo.responsable`
+tiene campana y registro en los dos frontales: su perfil lleva `notification-inbox` y
+`notification-activity-read`. El simulador reparte los dispositivos entre las dos con
 `--target localhost:9094,localhost:9095` y el tablero se mira desde cualquiera.
 
 ### Trabajar sobre un servicio
@@ -229,7 +235,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
 | 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
-| 5c | `mto-field-partial-import.json` | field | `mto-field-api`, `mto-field-svc`, sus permisos y los perfiles `mto-field-*`. Su cuenta de servicio nombra `mto-maintenance-api`, que ya existe |
+| 5c | `mto-field-partial-import.json` | field | `mto-field-api`, `mto-field-svc`, sus permisos y los perfiles `mto-field-*`. Su cuenta de servicio nombra `mto-maintenance-api`, que ya existe, y el responsable `notification-inbox` y `notification-activity-read` de `mto-notification-api`, que va la primera |
 | 5d | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los siete API; no declara roles |
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los siete** (y la bandeja, el registro y la administracion de `mto-notification`) |
 | 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-field-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |

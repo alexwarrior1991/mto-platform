@@ -389,11 +389,12 @@ Los crea el paso 7. La contraseña de todos es `local`.
 | `equipo.operario` / `.jefe` / `.supervisor` / `.jefe-supervisores` | `mto-position-worker` / `mto-position-team-leader` / `mto-position-supervisor` / `mto-position-chief-supervisor` |
 | `mantenimiento.jefe` / `proyecto.jefe` | `mto-position-chief-maintenance` / `mto-position-project-manager` |
 
-Los seis ultimos, uno por puesto, los trae `mto-resources-dev.json`. No estan en ningun grupo de
-equipo (`EQ-NORTE`, `EQ-SUR`), asi que en `mto-field` solo `equipo.supervisor` y
-`equipo.jefe-supervisores`, con `field-supervise`, se unen a cualquier turno: `equipo.operario` y
-`equipo.jefe` tienen `field-team`, pero la liga de equipo de `mto-field` no los deja unirse a ninguno
-mientras no esten en el grupo del suyo.
+Los seis ultimos, uno por puesto, los trae `mto-resources-dev.json`. `equipo.operario` y
+`equipo.jefe` estan en el grupo `EQ-NORTE` (lo declara la parcial de `mto-field`, aplicada antes que
+los ficheros de desarrollo), asi que con `field-team` se unen en `mto-field` a los turnos de ese
+equipo; `equipo.supervisor` y `equipo.jefe-supervisores`, con `field-supervise`, a cualquiera. Los
+grupos `EQ-*` todavia no se llaman como los equipos de mantenimiento (`A`, `B`): unificarlos es de
+la fase siguiente.
 
 ### Pedir un token a mano
 
@@ -437,8 +438,8 @@ que `mto-notification` necesita y sin los de maquina, que todo cliente de login 
 `mto-backoffice`) emita audiencia para los ocho API, que ningun cliente se declare dos veces con
 contenido distinto, que ningun texto se pase del ancho de su columna en Keycloak, que `mto-ops`
 cubra el Actuator de los ocho servicios, que los perfiles de puesto sean planos y se llamen
-`mto-position-*`, y que ningun usuario de desarrollo lleve un perfil que todavia no existe cuando se
-importa.
+`mto-position-*`, y que ningun usuario de desarrollo lleve un perfil ni entre en un grupo que
+todavia no existen cuando se importa.
 
 Los clientes del realm base y el local se comparan **campo a campo**, no solo por su nombre: una
 diferencia de flags entre los dos es precisamente lo que deja el stack local probando una

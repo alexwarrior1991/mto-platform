@@ -504,6 +504,43 @@ def ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas):
                 )
 
 
+def grupos_de(doc):
+    """Las rutas de los grupos que declara un fichero, con sus subgrupos ("/EQ-NORTE")."""
+    rutas = set()
+
+    def recorre(grupos, padre):
+        for grupo in grupos or []:
+            ruta = grupo.get("path") or f"{padre}/{grupo['name']}"
+            rutas.add(ruta)
+            recorre(grupo.get("subGroups"), ruta)
+
+    recorre(doc.get("groups"), "")
+    return rutas
+
+
+def ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas):
+    """Un usuario solo puede entrar en grupos que YA esten en el realm cuando se importa.
+
+    El grupo de equipo es lo que lee la liga de equipo de mto-field: un usuario de desarrollo con un
+    grupo mal escrito, o declarado en un fichero que se aplica despues, o rompe la importacion o se
+    queda sin grupo, y solo se nota cuando intenta unirse a un turno. Los usuarios de puesto de
+    mto-resources-dev.json entran en EQ-NORTE, que declara mto-field-partial-import.json, aplicado
+    antes que los ficheros de desarrollo.
+    """
+    disponibles = set()
+    for nombre, doc in orden:
+        disponibles.update(grupos_de(doc))
+        for usuario in doc.get("users", []) or []:
+            faltan = [g for g in usuario.get("groups", []) or [] if g not in disponibles]
+            if faltan:
+                problemas.error(
+                    "un usuario entra en un grupo que todavia no existe",
+                    f"  {nombre}: '{usuario.get('username')}' entra en {faltan}, que ningun fichero\n"
+                    f"  anterior declara. El fichero que lo declara va antes; vease el orden en\n"
+                    f"  keycloak/apply-partials.sh.",
+                )
+
+
 # Limites de las columnas del esquema de Keycloak sobre las que escribe una importacion. No son
 # una convencion nuestra: son el ancho de la columna, y pasarse aborta el arranque entero.
 COLUMNAS_KEYCLOAK = {
@@ -600,6 +637,7 @@ def main():
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
     los_perfiles_de_puesto_son_planos(puestos, problemas)
     ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas)
+    ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas)
 
     codigo = problemas.informe()
     if codigo == 0:

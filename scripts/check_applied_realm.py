@@ -90,6 +90,7 @@ def ficheros(raiz):
         raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json",
         raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json",
         raiz / "mto-field" / "keycloak" / "mto-field-partial-import.json",
+        raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json",
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json",
         plataforma / "mto-ops-cross-service.json",
     ]
@@ -100,6 +101,7 @@ def ficheros(raiz):
         raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json",
         raiz / "mto-users" / "keycloak" / "mto-users-dev.json",
         raiz / "mto-field" / "keycloak" / "mto-field-dev.json",
+        raiz / "mto-resources" / "keycloak" / "mto-resources-dev.json",
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-dev.json",
     ]
     return parciales, desarrollo
@@ -269,7 +271,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los ocho repositorios como hermanos.",
+        help="Directorio que contiene los diez repositorios como hermanos.",
     )
     args = parser.parse_args()
 

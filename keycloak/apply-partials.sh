@@ -8,7 +8,7 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los siete, asi que va DESPUES de las parciales que los crean; y la
+# mto-ops-cross-service.json nombra los ocho, asi que va DESPUES de las parciales que los crean; y la
 # de mto-notification va la PRIMERA, porque los perfiles de los demas nombraran sus permisos.
 # Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
 #
@@ -16,7 +16,7 @@
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los ocho repositorios de servicio como hermanos en el mismo directorio.
+# Espera los nueve repositorios de servicio como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -49,8 +49,11 @@ FICHEROS=(
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
   # La consola de campo (gRPC): su cuenta de servicio nombra mto-maintenance-api, que ya existe.
   "$HERMANOS/mto-field/keycloak/mto-field-partial-import.json"
+  # Personal, organizacion y flota: sus perfiles nombran config-read de mto-configuration-api y la
+  # bandeja de mto-notification-api, que ya existen. No tiene cuenta de servicio: no llama a nadie.
+  "$HERMANOS/mto-resources/keycloak/mto-resources-partial-import.json"
   # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
-  # audience mapper hacia los siete API: no declara roles, comprueba los de mto-configuration-api.
+  # audience mapper hacia los ocho API: no declara roles, comprueba los de mto-configuration-api.
   "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
 )
@@ -66,6 +69,7 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
     "$HERMANOS/mto-users/keycloak/mto-users-dev.json"
     "$HERMANOS/mto-field/keycloak/mto-field-dev.json"
+    "$HERMANOS/mto-resources/keycloak/mto-resources-dev.json"
     "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-dev.json"
   )
 fi
@@ -81,7 +85,7 @@ for fichero in "${FICHEROS[@]}" ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los nueve repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los diez repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 

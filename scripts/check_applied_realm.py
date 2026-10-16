@@ -93,6 +93,7 @@ def ficheros(raiz):
         raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json",
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json",
         plataforma / "mto-ops-cross-service.json",
+        plataforma / "mto-positions-cross-service.json",
     ]
     desarrollo = [
         raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json",

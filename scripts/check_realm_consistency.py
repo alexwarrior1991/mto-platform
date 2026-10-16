@@ -445,6 +445,65 @@ def el_perfil_de_explotacion_cubre_los_tres(orden, cruzado, problemas):
         )
 
 
+# Los roles de realm que Keycloak crea con el realm: un usuario puede llevarlos sin que ningun
+# fichero los declare.
+ROLES_DE_REALM_DE_FABRICA = {"offline_access", "uma_authorization", "default-roles-mto"}
+
+
+def los_perfiles_de_puesto_son_planos(puestos, problemas):
+    """mto-positions-cross-service.json solo trae perfiles de puesto, y cada uno nombra sus permisos.
+
+    Un puesto (operario, jefe de equipo, supervisor...) dice que puede hacer una persona en cada
+    servicio, y se revisa aqui, en un solo fichero. Si anidara el perfil de un servicio
+    (mto-maintenance-technician, por ejemplo), cualquier permiso que ese perfil ganara manana lo
+    ganaria tambien el puesto sin que nadie lo viera en este fichero. Por eso cada puesto lista los
+    roles de cliente uno a uno y no lleva compuestos de realm, y todos se llaman mto-position-*.
+    """
+    for perfil in puestos.get("roles", {}).get("realm", []):
+        nombre = perfil.get("name", "")
+        if not nombre.startswith("mto-position-"):
+            problemas.error(
+                "un perfil del fichero de puestos no es de puesto",
+                f"  mto-positions-cross-service.json define '{nombre}'. Ahi solo van los mto-position-*;\n"
+                f"  un perfil de un servicio vive en la parcial de ese servicio.",
+            )
+        anidados = (perfil.get("composites") or {}).get("realm")
+        if anidados:
+            problemas.error(
+                "un perfil de puesto anida otros perfiles",
+                f"  '{nombre}' agrupa los roles de realm {anidados}. Lo que esos perfiles ganen despues\n"
+                f"  lo ganaria tambien el puesto sin pasar por este fichero: listense sus roles de cliente.",
+            )
+        if not perfil.get("description"):
+            problemas.error(
+                "un perfil de puesto no dice que es",
+                f"  '{nombre}' no lleva descripcion. Es lo que se lee en la consola al asignarlo.",
+            )
+
+
+def ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas):
+    """Un usuario solo puede llevar perfiles que YA esten en el realm cuando se importa.
+
+    Keycloak no lo resuelve despues: al importar un usuario con un rol de realm que no existe, crea
+    un rol vacio con ese nombre en vez de fallar, y la persona entra sin ningun permiso sin que nada
+    lo diga. Los usuarios de puesto de mto-resources-dev.json llevan perfiles de
+    mto-positions-cross-service.json, que por eso va antes que los ficheros de desarrollo.
+    """
+    disponibles = set(ROLES_DE_REALM_DE_FABRICA)
+    for nombre, doc in orden:
+        disponibles.update(perfiles_de(doc))
+        for usuario in doc.get("users", []) or []:
+            faltan = [r for r in usuario.get("realmRoles", []) or [] if r not in disponibles]
+            if faltan:
+                problemas.error(
+                    "un usuario lleva un perfil que todavia no existe",
+                    f"  {nombre}: '{usuario.get('username')}' lleva {faltan}, que ningun fichero\n"
+                    f"  anterior define. Keycloak crearia un rol vacio con ese nombre y la persona\n"
+                    f"  entraria sin permisos. El fichero que lo define va antes; vease el orden en\n"
+                    f"  keycloak/apply-partials.sh.",
+                )
+
+
 # Limites de las columnas del esquema de Keycloak sobre las que escribe una importacion. No son
 # una convencion nuestra: son el ancho de la columna, y pasarse aborta el arranque entero.
 COLUMNAS_KEYCLOAK = {
@@ -498,6 +557,7 @@ def main():
     base = leer(plataforma / "mto-realm.json")
     local = leer(plataforma / "mto-realm-local.json")
     cruzado = leer(plataforma / "mto-ops-cross-service.json")
+    puestos = leer(plataforma / "mto-positions-cross-service.json")
 
     # El mismo orden en el que apply-partials.sh los aplica. Si cambia alli, cambia aqui.
     orden = [
@@ -513,6 +573,9 @@ def main():
         ("mto-resources-partial-import.json", leer(raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json")),
         ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
+        # Nombra roles de seis API: detras de todas las parciales. Y delante de los ficheros de
+        # desarrollo, porque los usuarios de puesto de mto-resources-dev.json llevan sus perfiles.
+        ("mto-positions-cross-service.json", puestos),
         ("mto-notification-dev.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json")),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
@@ -535,6 +598,8 @@ def main():
     todo_cliente_de_login_emite_audiencia_para_los_api(base, orden, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
+    los_perfiles_de_puesto_son_planos(puestos, problemas)
+    ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas)
 
     codigo = problemas.informe()
     if codigo == 0:

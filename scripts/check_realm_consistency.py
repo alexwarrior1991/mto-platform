@@ -604,10 +604,11 @@ def main():
         ("mto-configuration-partial-import.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-partial-import.json")),
         ("mto-stock-partial-import.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json")),
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
+        # Antes que mantenimiento: sus perfiles nombran resources-read.
+        ("mto-resources-partial-import.json", leer(raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json")),
         ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
         ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
         ("mto-field-partial-import.json", leer(raiz / "mto-field" / "keycloak" / "mto-field-partial-import.json")),
-        ("mto-resources-partial-import.json", leer(raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json")),
         ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
         # Nombra roles de seis API: detras de todas las parciales. Y delante de los ficheros de

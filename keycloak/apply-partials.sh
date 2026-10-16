@@ -47,13 +47,15 @@ FICHEROS=(
   "$HERMANOS/mto-configuration/keycloak/mto-configuration-partial-import.json"
   "$HERMANOS/mto-stock/keycloak/mto-stock-partial-import.json"
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
+  # Personal, organizacion y flota: sus perfiles nombran config-read de mto-configuration-api y la
+  # bandeja de mto-notification-api, que ya existen. Va antes que mantenimiento porque los perfiles de
+  # mantenimiento nombran resources-read (sus selectores de dotacion y vehiculos). No tiene cuenta de
+  # servicio: no llama a nadie.
+  "$HERMANOS/mto-resources/keycloak/mto-resources-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
   # La consola de campo (gRPC): su cuenta de servicio nombra mto-maintenance-api, que ya existe.
   "$HERMANOS/mto-field/keycloak/mto-field-partial-import.json"
-  # Personal, organizacion y flota: sus perfiles nombran config-read de mto-configuration-api y la
-  # bandeja de mto-notification-api, que ya existen. No tiene cuenta de servicio: no llama a nadie.
-  "$HERMANOS/mto-resources/keycloak/mto-resources-partial-import.json"
   # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
   # audience mapper hacia los ocho API: no declara roles, comprueba los de mto-configuration-api.
   "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"

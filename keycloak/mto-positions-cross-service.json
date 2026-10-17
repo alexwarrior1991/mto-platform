@@ -124,6 +124,9 @@
               "notification-inbox",
               "notification-activity-read"
             ],
+            "mto-field-api": [
+              "field-watch"
+            ],
             "mto-maintenance-api": [
               "maintenance-read",
               "maintenance-write",
@@ -154,6 +157,9 @@
             "mto-notification-api": [
               "notification-inbox",
               "notification-activity-read"
+            ],
+            "mto-field-api": [
+              "field-watch"
             ],
             "mto-maintenance-api": [
               "maintenance-read"

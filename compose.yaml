@@ -53,6 +53,9 @@ x-field-environment: &field-environment
   # (quien esta conectado a que replica, latidos, hasta donde se ha escrito). Con false cada
   # replica se entera de las demas por la base, en cada tic de puesta al dia.
   APP_RABBITMQ_ENABLED: ${MTO_FIELD_RABBITMQ_ENABLED:-true}
+  # La posicion del vehiculo de cada dispositivo (el kp de sus latidos) hacia mto-resources, por su
+  # exchange de telemetria; la cola la declara mto-resources, que tiene que estar levantado antes.
+  APP_FIELD_POSITIONS_ENABLED: ${MTO_FIELD_POSITIONS_ENABLED:-true}
   SPRING_RABBITMQ_HOST: rabbitmq
   SPRING_RABBITMQ_PORT: 5672
   SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}

@@ -160,8 +160,9 @@ sale por `mto.resources.exchange` hacia la cola `mto.maintenance.resources.queue
 firmado con el mismo `MESSAGING_SIGNATURE_SECRET` que los demas productores. Por eso se levanta con
 el perfil `maintenance`. Un consumidor nuevo (o mantenimiento, la primera vez que declara su cola) se
 pone al dia con `POST /actuator/republish`, con `ops-write` de `mto-resources-api`, que lleva
-`mto-ops`. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta que su CI la publique
-en GHCR. Su parcial trae los perfiles `mto-resources-*`; los perfiles de puesto, que cruzan
+`mto-ops`. Su imagen la publica su CI en GHCR al fusionar en `master` y `docker compose pull resources`
+la trae; lleva `build` ademas de `image`, como el backoffice, para construirla desde el checkout
+hermano cuando no existe (una rama de trabajo). Su parcial trae los perfiles `mto-resources-*`; los perfiles de puesto, que cruzan
 servicios, viven aqui (abajo).
 
 ### Trabajar sobre un servicio

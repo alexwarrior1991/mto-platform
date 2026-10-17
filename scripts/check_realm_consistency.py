@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprueba que las piezas del realm 'mto' repartidas por los nueve repositorios encajan.
+"""Comprueba que las piezas del realm 'mto' repartidas por los diez repositorios encajan.
 
 Los ficheros de keycloak/ no los compila nadie: un error en ellos no se descubre hasta que alguien
 levanta el stack o, peor, hasta que se importa en un entorno. Y desde que el realm se ensambla a
@@ -12,7 +12,7 @@ repositorio. Solo libreria estandar: este es un repositorio de composes y no se 
 Uso:
     python3 scripts/check_realm_consistency.py [--repos DIR]
 
-DIR es el directorio que contiene los nueve repositorios como hermanos (por defecto, el padre de
+DIR es el directorio que contiene los diez repositorios como hermanos (por defecto, el padre de
 este repositorio).
 """
 
@@ -30,6 +30,7 @@ CLIENTES_API = (
     "mto-users-api",
     "mto-notification-api",
     "mto-field-api",
+    "mto-resources-api",
 )
 
 # Los eventos de acceso que mto-notification necesita leer del realm. Sin LOGIN y LOGIN_ERROR no
@@ -99,7 +100,7 @@ def leer(ruta):
     if not ruta.is_file():
         raise SystemExit(
             f"No se encuentra {ruta}.\n"
-            "Los ocho repositorios tienen que estar como hermanos en el mismo directorio; "
+            "Los diez repositorios tienen que estar como hermanos en el mismo directorio; "
             "usese --repos para indicar otro."
         )
     with ruta.open(encoding="utf-8") as f:
@@ -444,6 +445,102 @@ def el_perfil_de_explotacion_cubre_los_tres(orden, cruzado, problemas):
         )
 
 
+# Los roles de realm que Keycloak crea con el realm: un usuario puede llevarlos sin que ningun
+# fichero los declare.
+ROLES_DE_REALM_DE_FABRICA = {"offline_access", "uma_authorization", "default-roles-mto"}
+
+
+def los_perfiles_de_puesto_son_planos(puestos, problemas):
+    """mto-positions-cross-service.json solo trae perfiles de puesto, y cada uno nombra sus permisos.
+
+    Un puesto (operario, jefe de equipo, supervisor...) dice que puede hacer una persona en cada
+    servicio, y se revisa aqui, en un solo fichero. Si anidara el perfil de un servicio
+    (mto-maintenance-technician, por ejemplo), cualquier permiso que ese perfil ganara manana lo
+    ganaria tambien el puesto sin que nadie lo viera en este fichero. Por eso cada puesto lista los
+    roles de cliente uno a uno y no lleva compuestos de realm, y todos se llaman mto-position-*.
+    """
+    for perfil in puestos.get("roles", {}).get("realm", []):
+        nombre = perfil.get("name", "")
+        if not nombre.startswith("mto-position-"):
+            problemas.error(
+                "un perfil del fichero de puestos no es de puesto",
+                f"  mto-positions-cross-service.json define '{nombre}'. Ahi solo van los mto-position-*;\n"
+                f"  un perfil de un servicio vive en la parcial de ese servicio.",
+            )
+        anidados = (perfil.get("composites") or {}).get("realm")
+        if anidados:
+            problemas.error(
+                "un perfil de puesto anida otros perfiles",
+                f"  '{nombre}' agrupa los roles de realm {anidados}. Lo que esos perfiles ganen despues\n"
+                f"  lo ganaria tambien el puesto sin pasar por este fichero: listense sus roles de cliente.",
+            )
+        if not perfil.get("description"):
+            problemas.error(
+                "un perfil de puesto no dice que es",
+                f"  '{nombre}' no lleva descripcion. Es lo que se lee en la consola al asignarlo.",
+            )
+
+
+def ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas):
+    """Un usuario solo puede llevar perfiles que YA esten en el realm cuando se importa.
+
+    Keycloak no lo resuelve despues: al importar un usuario con un rol de realm que no existe, crea
+    un rol vacio con ese nombre en vez de fallar, y la persona entra sin ningun permiso sin que nada
+    lo diga. Los usuarios de puesto de mto-resources-dev.json llevan perfiles de
+    mto-positions-cross-service.json, que por eso va antes que los ficheros de desarrollo.
+    """
+    disponibles = set(ROLES_DE_REALM_DE_FABRICA)
+    for nombre, doc in orden:
+        disponibles.update(perfiles_de(doc))
+        for usuario in doc.get("users", []) or []:
+            faltan = [r for r in usuario.get("realmRoles", []) or [] if r not in disponibles]
+            if faltan:
+                problemas.error(
+                    "un usuario lleva un perfil que todavia no existe",
+                    f"  {nombre}: '{usuario.get('username')}' lleva {faltan}, que ningun fichero\n"
+                    f"  anterior define. Keycloak crearia un rol vacio con ese nombre y la persona\n"
+                    f"  entraria sin permisos. El fichero que lo define va antes; vease el orden en\n"
+                    f"  keycloak/apply-partials.sh.",
+                )
+
+
+def grupos_de(doc):
+    """Las rutas de los grupos que declara un fichero, con sus subgrupos ("/EQ-NORTE")."""
+    rutas = set()
+
+    def recorre(grupos, padre):
+        for grupo in grupos or []:
+            ruta = grupo.get("path") or f"{padre}/{grupo['name']}"
+            rutas.add(ruta)
+            recorre(grupo.get("subGroups"), ruta)
+
+    recorre(doc.get("groups"), "")
+    return rutas
+
+
+def ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas):
+    """Un usuario solo puede entrar en grupos que YA esten en el realm cuando se importa.
+
+    El grupo de equipo es lo que lee la liga de equipo de mto-field: un usuario de desarrollo con un
+    grupo mal escrito, o declarado en un fichero que se aplica despues, o rompe la importacion o se
+    queda sin grupo, y solo se nota cuando intenta unirse a un turno. Los usuarios de puesto de
+    mto-resources-dev.json entran en EQ-NORTE, que declara mto-field-partial-import.json, aplicado
+    antes que los ficheros de desarrollo.
+    """
+    disponibles = set()
+    for nombre, doc in orden:
+        disponibles.update(grupos_de(doc))
+        for usuario in doc.get("users", []) or []:
+            faltan = [g for g in usuario.get("groups", []) or [] if g not in disponibles]
+            if faltan:
+                problemas.error(
+                    "un usuario entra en un grupo que todavia no existe",
+                    f"  {nombre}: '{usuario.get('username')}' entra en {faltan}, que ningun fichero\n"
+                    f"  anterior declara. El fichero que lo declara va antes; vease el orden en\n"
+                    f"  keycloak/apply-partials.sh.",
+                )
+
+
 # Limites de las columnas del esquema de Keycloak sobre las que escribe una importacion. No son
 # una convencion nuestra: son el ancho de la columna, y pasarse aborta el arranque entero.
 COLUMNAS_KEYCLOAK = {
@@ -487,7 +584,7 @@ def main():
         "--repos",
         type=Path,
         default=Path(__file__).resolve().parent.parent.parent,
-        help="Directorio que contiene los nueve repositorios como hermanos.",
+        help="Directorio que contiene los diez repositorios como hermanos.",
     )
     args = parser.parse_args()
 
@@ -497,6 +594,7 @@ def main():
     base = leer(plataforma / "mto-realm.json")
     local = leer(plataforma / "mto-realm-local.json")
     cruzado = leer(plataforma / "mto-ops-cross-service.json")
+    puestos = leer(plataforma / "mto-positions-cross-service.json")
 
     # El mismo orden en el que apply-partials.sh los aplica. Si cambia alli, cambia aqui.
     orden = [
@@ -506,17 +604,23 @@ def main():
         ("mto-configuration-partial-import.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-partial-import.json")),
         ("mto-stock-partial-import.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-partial-import.json")),
         ("mto-gateway-partial-import.json", leer(raiz / "mto-gateway" / "keycloak" / "mto-gateway-partial-import.json")),
+        # Antes que mantenimiento: sus perfiles nombran resources-read.
+        ("mto-resources-partial-import.json", leer(raiz / "mto-resources" / "keycloak" / "mto-resources-partial-import.json")),
         ("mto-maintenance-partial-import.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-partial-import.json")),
         ("mto-users-partial-import.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-partial-import.json")),
         ("mto-field-partial-import.json", leer(raiz / "mto-field" / "keycloak" / "mto-field-partial-import.json")),
         ("mto-backoffice-partial-import.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json")),
         ("mto-ops-cross-service.json", cruzado),
+        # Nombra roles de seis API: detras de todas las parciales. Y delante de los ficheros de
+        # desarrollo, porque los usuarios de puesto de mto-resources-dev.json llevan sus perfiles.
+        ("mto-positions-cross-service.json", puestos),
         ("mto-notification-dev.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json")),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
         ("mto-maintenance-dev.json", leer(raiz / "mto-maintenance" / "keycloak" / "mto-maintenance-dev.json")),
         ("mto-users-dev.json", leer(raiz / "mto-users" / "keycloak" / "mto-users-dev.json")),
         ("mto-field-dev.json", leer(raiz / "mto-field" / "keycloak" / "mto-field-dev.json")),
+        ("mto-resources-dev.json", leer(raiz / "mto-resources" / "keycloak" / "mto-resources-dev.json")),
         ("mto-backoffice-dev.json", leer(raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-dev.json")),
     ]
     # Las parciales que crean clientes y permisos: todo lo que va ANTES del perfil cruzado.
@@ -532,6 +636,9 @@ def main():
     todo_cliente_de_login_emite_audiencia_para_los_api(base, orden, problemas)
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
+    los_perfiles_de_puesto_son_planos(puestos, problemas)
+    ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas)
+    ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas)
 
     codigo = problemas.informe()
     if codigo == 0:

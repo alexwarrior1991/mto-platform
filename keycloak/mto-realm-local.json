@@ -139,6 +139,16 @@
           }
         },
         {
+          "name": "audiencia-mto-resources-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mto-resources-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
           "name": "grupos",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-group-membership-mapper",

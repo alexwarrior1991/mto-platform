@@ -41,6 +41,11 @@
             "mto-field-api": [
               "ops-metrics",
               "ops-write"
+            ],
+            "mto-resources-api": [
+              "resources-read",
+              "ops-metrics",
+              "ops-write"
             ]
           }
         }

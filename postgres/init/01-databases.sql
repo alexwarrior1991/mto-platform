@@ -1,4 +1,4 @@
--- Las cinco bases del dominio en un unico servidor.
+-- Las seis bases del dominio en un unico servidor.
 --
 -- El contenedor de PostgreSQL ejecuta los ficheros de /docker-entrypoint-initdb.d SOLO en la
 -- primera inicializacion, cuando el directorio de datos esta vacio. Si se cambia algo de aqui
@@ -29,6 +29,9 @@
 \getenv field_db            MTO_FIELD_DB
 \getenv field_user          MTO_FIELD_USER
 \getenv field_pass          MTO_FIELD_PASSWORD
+\getenv resources_db        MTO_RESOURCES_DB
+\getenv resources_user      MTO_RESOURCES_USER
+\getenv resources_pass      MTO_RESOURCES_PASSWORD
 
 -- mto-configuration ------------------------------------------------------------------------------
 
@@ -88,12 +91,25 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'field_db', :'field_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'field_db')
 \gexec
 
+-- mto-resources ----------------------------------------------------------------------------------
+--
+-- Anadida despues de las otras cinco, como las de mto-notification y mto-field: sobre un volumen ya
+-- inicializado hay que pasarle este fichero a psql dentro del contenedor (vease README.md).
+
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'resources_user', :'resources_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'resources_user')
+\gexec
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'resources_db', :'resources_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'resources_db')
+\gexec
+
 -- El esquema de mto-configuration ------------------------------------------------------------
 --
 -- Flyway esta configurado con default-schema y schemas y sabe crearlo, pero necesita privilegios
 -- sobre la base entera para ello. Se crea aqui con el dueño correcto para no tener que darselos.
--- mto-stock, mto-maintenance, mto-notification y mto-field usan el esquema public de su propia base
--- y no necesitan nada equivalente.
+-- mto-stock, mto-maintenance, mto-notification, mto-field y mto-resources usan el esquema public de
+-- su propia base y no necesitan nada equivalente.
 
 \connect :configuration_db
 

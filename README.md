@@ -2,7 +2,8 @@
 
 Entorno de **desarrollo local** del dominio MTO: una sola infraestructura compartida por
 `mto-configuration`, `mto-stock`, `mto-maintenance`, `mto-users`, `mto-notification`, `mto-field`,
-`mto-gateway`, `mto-backoffice` y `mto-frontend`, y el realm de Keycloak que los nueve usan.
+`mto-resources`, `mto-gateway`, `mto-backoffice` y `mto-frontend`, y el realm de Keycloak que los
+diez usan.
 
 No es el mecanismo de despliegue de entornos reales.
 
@@ -20,7 +21,7 @@ Cada repositorio traia su propio stack completo, y eso provocaba tres problemas 
   fallaba**: ni un error, ni un aviso.
 - **Los stacks chocaban de puertos** en 5432, 5672, 15672, 8082, 9000, 16686 y 4318.
 
-Aqui hay un solo Postgres con las cinco bases, un solo Redis, **un solo broker**, un solo Keycloak,
+Aqui hay un solo Postgres con las seis bases, un solo Redis, **un solo broker**, un solo Keycloak,
 un solo colector de trazas y un solo buzon de correo (Mailpit) al que va todo lo que se manda en
 local.
 
@@ -33,7 +34,7 @@ tokens es esa URL y tiene que resolverse igual desde dentro de compose y desde e
 127.0.0.1  auth.mto.local  otel.mto.local
 ```
 
-Los diez repositorios tienen que estar como hermanos en el mismo directorio: el script de
+Los once repositorios tienen que estar como hermanos en el mismo directorio: el script de
 ensamblado del realm lee la importacion parcial de cada servicio desde su propio repositorio, y
 compose construye desde el checkout hermano las imagenes que aun no estan en GHCR.
 
@@ -46,6 +47,7 @@ mto/
 ├── mto-users/
 ├── mto-notification/
 ├── mto-field/
+├── mto-resources/
 ├── mto-gateway/
 ├── mto-backoffice/
 └── mto-frontend/
@@ -73,6 +75,7 @@ docker compose --profile frontend --profile gateway up -d       # la SPA y el ga
 docker compose --profile notification up -d                     # el registro de actividad y las notificaciones
 docker compose --profile maintenance --profile field up -d     # la consola en directo del bloqueo de via (gRPC) y el mantenimiento al que llama
 docker compose --profile maintenance --profile field --profile field-cluster up -d   # lo mismo con dos replicas de mto-field
+docker compose --profile resources --profile maintenance up -d # personal, organizacion y flota, y el mantenimiento que los usa
 ```
 
 `mto-users` no tiene base de datos ni broker: administra usuarios, roles y perfiles del realm por
@@ -146,6 +149,21 @@ tiene campana y registro en los dos frontales: su perfil lleva `notification-inb
 `notification-activity-read`. El simulador reparte los dispositivos entre las dos con
 `--target localhost:9094,localhost:9095` y el tablero se mira desde cualquiera.
 
+`mto-resources` (el personal, la organizacion y la flota: las personas y su jerarquia, los equipos
+—un jefe y de 2 a 6 linemen en un vehiculo— y los vehiculos de via, biviales y de carretera con
+donde esta cada uno) tiene el perfil `resources` y su propia base en el mismo Postgres; escucha en el
+8089 y el gateway lo publica en `/api/resources`. No llama a nadie, asi que no tiene cuenta de
+servicio ni nada en el paso 8: lo que necesita de `mto-maintenance` (donde se dejo cada vehiculo de
+un turno) le llega por el broker, en su cola `mto.resources.maintenance.queue` atada a
+`mto.maintenance.shift.*`, y lo que `mto-maintenance` necesita de el (equipos, dotaciones, vehiculos)
+sale por `mto.resources.exchange` hacia la cola `mto.maintenance.resources.queue` de mantenimiento,
+firmado con el mismo `MESSAGING_SIGNATURE_SECRET` que los demas productores. Por eso se levanta con
+el perfil `maintenance`. Un consumidor nuevo (o mantenimiento, la primera vez que declara su cola) se
+pone al dia con `POST /actuator/republish`, con `ops-write` de `mto-resources-api`, que lleva
+`mto-ops`. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta que su CI la publique
+en GHCR. Su parcial trae los perfiles `mto-resources-*`; los perfiles de puesto, que cruzan
+servicios, viven aqui (abajo).
+
 ### Trabajar sobre un servicio
 
 Levanta todo, para el que vayas a tocar y arrancalo desde el IDE contra esta misma
@@ -181,6 +199,7 @@ MTO_STOCK_URL=http://host.docker.internal:8080
 | `mto-notification` | 8086 |
 | `mto-field` | 8087 (Actuator; gRPC en 9094, sin pasar por el gateway) |
 | `mto-field` (segunda replica, perfil `field-cluster`) | 8088 (Actuator; gRPC en 9095) |
+| `mto-resources` | 8089 |
 | `mto-gateway` | 8090 |
 | Keycloak | 8082 (management 9000) |
 | Jaeger | 16686 (OTLP HTTP 4318, gRPC 4317) |
@@ -193,8 +212,9 @@ Todos son parametrizables desde `.env`.
 
 El gateway enruta `/api/configuration/**` a `/api/v1/configuration/**`, `/api/stock/**` a
 `/api/v1/inventory/**`, `/api/maintenance/**` a `/api/v1/maintenance/**`, `/api/users/**` a
-`/api/v1/users/**` y `/api/notifications/**` a `/api/v1/notifications/**`. `mto-field` no esta
-detras del gateway: su API es gRPC y se llama directamente al 9094.
+`/api/v1/users/**`, `/api/notifications/**` a `/api/v1/notifications/**` y `/api/resources/**` a
+`/api/v1/resources/**`. `mto-field` no esta detras del gateway: su API es gRPC y se llama
+directamente al 9094.
 
 ## El correo
 
@@ -233,12 +253,14 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
+| 4b | `mto-resources-partial-import.json` | resources | `mto-resources-api`, sus permisos y los perfiles `mto-resources-*`; sin cuenta de servicio, porque no llama a nadie. Sus perfiles nombran `config-read` de `mto-configuration-api` y la bandeja de `mto-notification-api`, que ya existen. Va antes que mantenimiento porque los perfiles `mto-maintenance-*` nombran `resources-read` |
 | 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
 | 5c | `mto-field-partial-import.json` | field | `mto-field-api`, `mto-field-svc`, sus permisos y los perfiles `mto-field-*`. Su cuenta de servicio nombra `mto-maintenance-api`, que ya existe, y el responsable `notification-inbox` y `notification-activity-read` de `mto-notification-api`, que va la primera |
-| 5d | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los siete API; no declara roles |
-| 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los siete** (y la bandeja, el registro y la administracion de `mto-notification`) |
-| 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-field-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
+| 5d | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los ocho API; no declara roles |
+| 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los ocho** (y la bandeja, el registro y la administracion de `mto-notification`) |
+| 6b | `keycloak/mto-positions-cross-service.json` | platform | los perfiles de puesto `mto-position-*` (abajo), que nombran roles de seis API: detras de todas las parciales y delante de los usuarios de desarrollo, que los llevan |
+| 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-field-dev.json` / `mto-resources-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`; los de puesto, en `mto-resources-dev.json`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
 | 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc`; `maintenance-read` y `maintenance-write` de `mto-maintenance-api` para `mto-field-svc` |
 | 9 | *(API de administracion)* | platform | los eventos del realm tal como los declara `mto-realm.json` (`events/config` y el atributo `adminEventsExpiration`) y, si se aplican los usuarios de desarrollo, el `smtpServer` hacia Mailpit de `mto-realm-local.json` |
 
@@ -286,9 +308,13 @@ una vez, se quedaria sin ellos y `mto-notification` leeria una lista vacia sin q
 la API es reejecutable.
 
 **El orden no es un detalle.** Un compuesto solo puede nombrar roles de clientes que ya existan en
-el realm: `mto-ops-cross-service.json` nombra los siete, asi que va detras de las parciales que los
-crean; y la de `mto-notification` va la primera porque los perfiles de los demas nombraran sus
-permisos. Al reves Keycloak responde *App doesn't exist in role definitions* y no aplica nada.
+el realm: `mto-ops-cross-service.json` nombra los ocho y `mto-positions-cross-service.json` seis, asi
+que van detras de las parciales que los crean; y la de `mto-notification` va la primera porque los
+perfiles de los demas nombraran sus permisos. Al reves Keycloak responde *App doesn't exist in role
+definitions* y no aplica nada. Con un usuario es peor, porque no falla: si lleva un perfil que aun no
+existe, Keycloak crea un rol vacio con ese nombre y la persona entra sin permisos. Por eso los
+ficheros de desarrollo van al final, detras de los perfiles de puesto que llevan los usuarios de
+puesto de `mto-resources-dev.json`.
 
 ### Los eventos del realm
 
@@ -315,7 +341,8 @@ perfil sin atributos y se pierden `firstName` y `lastName`.
 
 Cada servicio sigue siendo dueño de sus clientes, roles y perfiles, en su propio repositorio: asi
 un rol se cambia en el mismo commit que el codigo que lo comprueba (`SecurityRoles`). La plataforma
-es dueña del realm base, del perfil que cruza servicios y del orden.
+es dueña del realm base, de los perfiles que cruzan servicios (`mto-ops` y los de puesto) y del
+orden.
 
 Los usuarios de desarrollo van en un fichero aparte del de clientes y roles para que la parcial se
 pueda aplicar en un entorno desplegado sin arrastrarlos:
@@ -323,6 +350,28 @@ pueda aplicar en un entorno desplegado sin arrastrarlos:
 ```bash
 ./keycloak/apply-partials.sh --no-dev-users
 ```
+
+### Los perfiles de puesto
+
+Un perfil de servicio (`mto-maintenance-technician`, `mto-warehouse-viewer`...) dice que se puede
+hacer en un servicio; un **perfil de puesto** dice que puede hacer en todo el dominio quien ocupa un
+puesto de la organizacion de `mto-resources`. Cruzan seis servicios, asi que no son de ninguno: viven
+en `keycloak/mto-positions-cross-service.json`, como `mto-ops`, y cada uno lista sus roles de cliente
+uno a uno, sin anidar perfiles de servicio, para que lo que uno de ellos gane despues no lo gane un
+puesto sin pasar por ese fichero (`check_realm_consistency.py` lo exige).
+
+| perfil | `mto-notification-api` | `mto-field-api` | `mto-maintenance-api` | `mto-configuration-api` | `mto-stock-api` | `mto-resources-api` |
+|---|---|---|---|---|---|---|
+| `mto-position-worker` | `notification-inbox` | `field-team` | `maintenance-read` | — | — | `resources-read` |
+| `mto-position-team-leader` | `notification-inbox` | `field-team` | `maintenance-read`, `maintenance-write` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
+| `mto-position-supervisor` | `notification-inbox`, `notification-activity-read` | `field-team`, `field-supervise` | `maintenance-read`, `maintenance-write` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
+| `mto-position-chief-supervisor` | `notification-inbox`, `notification-activity-read` | `field-team`, `field-supervise` | `maintenance-read`, `maintenance-write`, `maintenance-supervise` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
+| `mto-position-chief-maintenance` | `notification-inbox`, `notification-activity-read` | — | `maintenance-read`, `maintenance-write`, `maintenance-supervise`, `maintenance-delete` | `config-read` | `stock-read` | `resources-read`, `resources-write`, `resources-fleet-write`, `resources-location-write` |
+| `mto-position-project-manager` | `notification-inbox`, `notification-activity-read` | — | `maintenance-read` | `config-read` | `stock-read` | `resources-read` |
+
+Permiso no es puesto: el perfil dice que puede hacer una persona; a quien dirige y en que EP lo dice
+el organigrama de `mto-resources`, que nunca escribe el realm. Se guardan separados a proposito: un
+suplente puede necesitar el perfil sin cambiar de puesto.
 
 ### Usuarios de desarrollo
 
@@ -336,6 +385,16 @@ Los crea el paso 7. La contraseña de todos es `local`.
 | `usuarios.lector` / `.gestor` / `.responsable` | `mto-users-viewer` / `mto-users-manager` / `mto-users-admin` |
 | `notificacion.lector` / `.auditor` / `.responsable` | `mto-notification-viewer` / `mto-notification-auditor` / `mto-notification-admin` |
 | `campo.tecnico1` / `.tecnico2` / `campo.responsable` | `mto-field-technician` / `mto-field-technician` / `mto-field-supervisor` |
+| `recursos.lector` / `.gestor` / `.responsable` | `mto-resources-viewer` / `mto-resources-manager` / `mto-resources-admin` |
+| `equipo.operario` / `.jefe` / `.supervisor` / `.jefe-supervisores` | `mto-position-worker` / `mto-position-team-leader` / `mto-position-supervisor` / `mto-position-chief-supervisor` |
+| `mantenimiento.jefe` / `proyecto.jefe` | `mto-position-chief-maintenance` / `mto-position-project-manager` |
+
+Los seis ultimos, uno por puesto, los trae `mto-resources-dev.json`. `equipo.operario` y
+`equipo.jefe` estan en el grupo `EQ-NORTE` (lo declara la parcial de `mto-field`, aplicada antes que
+los ficheros de desarrollo), asi que con `field-team` se unen en `mto-field` a los turnos de ese
+equipo; `equipo.supervisor` y `equipo.jefe-supervisores`, con `field-supervise`, a cualquiera. Los
+grupos `EQ-*` todavia no se llaman como los equipos de mantenimiento (`A`, `B`): unificarlos es de
+la fase siguiente.
 
 ### Pedir un token a mano
 
@@ -376,16 +435,18 @@ ficheros **en el orden en que se aplican**, que ningun compuesto nombre un clien
 todavia no existe, que el realm base y el local no se separen, que el base no gane usuarios ni
 secretos **ni abra el password grant**, que los eventos del realm esten activados con los tipos
 que `mto-notification` necesita y sin los de maquina, que todo cliente de login (`mto-frontend` y
-`mto-backoffice`) emita audiencia para los siete API, que ningun cliente se declare dos veces con
-contenido distinto, que ningun texto se pase del ancho de su columna en Keycloak y que `mto-ops`
-cubra el Actuator de los siete servicios.
+`mto-backoffice`) emita audiencia para los ocho API, que ningun cliente se declare dos veces con
+contenido distinto, que ningun texto se pase del ancho de su columna en Keycloak, que `mto-ops`
+cubra el Actuator de los ocho servicios, que los perfiles de puesto sean planos y se llamen
+`mto-position-*`, y que ningun usuario de desarrollo lleve un perfil ni entre en un grupo que
+todavia no existen cuando se importa.
 
 Los clientes del realm base y el local se comparan **campo a campo**, no solo por su nombre: una
 diferencia de flags entre los dos es precisamente lo que deja el stack local probando una
 autorizacion distinta de la real. Las diferencias deliberadas se declaran en
 `DELTAS_DE_CLIENTE_PERMITIDOS`, con el motivo al lado.
 
-Lo ejecuta el CI de este repositorio, que hace checkout de los nueve.
+Lo ejecuta el CI de este repositorio, que hace checkout de los diez.
 
 ### Y que Keycloak se queda con lo que dicen
 
@@ -482,10 +543,10 @@ exige `down -v`.
 
 ### Una base nueva en un stack ya levantado
 
-Una base que se anade despues (la de `mto-notification` lo fue) no aparece sola en un volumen que
-ya existia, porque el init no vuelve a ejecutarse. No hace falta `down -v` ni perder datos: el
-guion es reejecutable (crea solo lo que no existe), asi que basta con recrear `postgres` para que
-lleve las variables nuevas y pasarselo a `psql` dentro del contenedor:
+Una base que se anade despues (las de `mto-notification`, `mto-field` y `mto-resources` lo fueron)
+no aparece sola en un volumen que ya existia, porque el init no vuelve a ejecutarse. No hace falta
+`down -v` ni perder datos: el guion es reejecutable (crea solo lo que no existe), asi que basta con
+recrear `postgres` para que lleve las variables nuevas y pasarselo a `psql` dentro del contenedor:
 
 ```bash
 docker compose up -d --force-recreate postgres

@@ -8,15 +8,17 @@
 # que un rol se pueda cambiar en el mismo commit que el codigo que lo comprueba (SecurityRoles).
 #
 # EL ORDEN IMPORTA. Un compuesto solo puede nombrar roles de clientes que ya existan en el realm:
-# mto-ops-cross-service.json nombra los siete, asi que va DESPUES de las parciales que los crean; y la
-# de mto-notification va la PRIMERA, porque los perfiles de los demas nombraran sus permisos.
-# Al reves Keycloak responde "App doesn't exist in role definitions" y no aplica nada.
+# mto-ops-cross-service.json nombra los ocho y mto-positions-cross-service.json seis, asi que van
+# DESPUES de las parciales que los crean; y la de mto-notification va la PRIMERA, porque los perfiles
+# de los demas nombraran sus permisos. Al reves Keycloak responde "App doesn't exist in role
+# definitions" y no aplica nada. Y un usuario solo puede llevar un perfil que ya exista: los ficheros
+# de desarrollo van al final, detras de los perfiles de puesto que nombran los de mto-resources.
 #
 # Uso:
 #   ./keycloak/apply-partials.sh                 # con los usuarios de desarrollo
 #   ./keycloak/apply-partials.sh --no-dev-users  # solo clientes, roles y perfiles
 #
-# Espera los ocho repositorios de servicio como hermanos en el mismo directorio.
+# Espera los nueve repositorios de servicio como hermanos en el mismo directorio.
 
 set -euo pipefail
 
@@ -45,14 +47,22 @@ FICHEROS=(
   "$HERMANOS/mto-configuration/keycloak/mto-configuration-partial-import.json"
   "$HERMANOS/mto-stock/keycloak/mto-stock-partial-import.json"
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
+  # Personal, organizacion y flota: sus perfiles nombran config-read de mto-configuration-api y la
+  # bandeja de mto-notification-api, que ya existen. Va antes que mantenimiento porque los perfiles de
+  # mantenimiento nombran resources-read (sus selectores de dotacion y vehiculos). No tiene cuenta de
+  # servicio: no llama a nadie.
+  "$HERMANOS/mto-resources/keycloak/mto-resources-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
   # La consola de campo (gRPC): su cuenta de servicio nombra mto-maintenance-api, que ya existe.
   "$HERMANOS/mto-field/keycloak/mto-field-partial-import.json"
   # El backoffice web solo aporta su cliente de login (Authorization Code con secreto) con los
-  # audience mapper hacia los siete API: no declara roles, comprueba los de mto-configuration-api.
+  # audience mapper hacia los ocho API: no declara roles, comprueba los de mto-configuration-api.
   "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-partial-import.json"
   "$AQUI/mto-ops-cross-service.json"
+  # Los perfiles de puesto (operario, jefe de equipo, supervisor...): cruzan seis servicios, asi que
+  # van detras de todas sus parciales. Los usuarios de puesto de mto-resources-dev.json los nombran.
+  "$AQUI/mto-positions-cross-service.json"
 )
 
 # Los ficheros de desarrollo (usuarios con contrasena 'local' y los secretos fijos de los clientes
@@ -66,6 +76,8 @@ if [[ $CON_USUARIOS -eq 1 ]]; then
     "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-dev.json"
     "$HERMANOS/mto-users/keycloak/mto-users-dev.json"
     "$HERMANOS/mto-field/keycloak/mto-field-dev.json"
+    # Ademas de los de recursos, los usuarios de cada puesto: detras de mto-positions-cross-service.json.
+    "$HERMANOS/mto-resources/keycloak/mto-resources-dev.json"
     "$HERMANOS/mto-backoffice/keycloak/mto-backoffice-dev.json"
   )
 fi
@@ -81,7 +93,7 @@ for fichero in "${FICHEROS[@]}" ${DESARROLLO[@]+"${DESARROLLO[@]}"}; do
 done
 if [[ $faltan -eq 1 ]]; then
   echo >&2
-  echo "Los nueve repositorios tienen que estar como hermanos en $HERMANOS." >&2
+  echo "Los diez repositorios tienen que estar como hermanos en $HERMANOS." >&2
   exit 1
 fi
 

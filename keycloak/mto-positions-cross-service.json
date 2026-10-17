@@ -1,0 +1,175 @@
+{
+  "roles": {
+    "realm": [
+      {
+        "name": "mto-position-worker",
+        "description": "Puesto de operario (lineman) de un equipo: su bandeja, el canal de campo de su equipo y la consulta del mantenimiento y del personal",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox"
+            ],
+            "mto-field-api": [
+              "field-team"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read"
+            ],
+            "mto-resources-api": [
+              "resources-read"
+            ]
+          }
+        }
+      },
+      {
+        "name": "mto-position-team-leader",
+        "description": "Puesto de jefe de equipo: lo del operario, ejecutar el trabajo de mantenimiento, registrar donde queda cada vehiculo y leer la infraestructura y el almacen",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox"
+            ],
+            "mto-field-api": [
+              "field-team"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read",
+              "maintenance-write"
+            ],
+            "mto-configuration-api": [
+              "config-read"
+            ],
+            "mto-stock-api": [
+              "stock-read"
+            ],
+            "mto-resources-api": [
+              "resources-read",
+              "resources-location-write"
+            ]
+          }
+        }
+      },
+      {
+        "name": "mto-position-supervisor",
+        "description": "Puesto de supervisor: lo del jefe de equipo, el registro de actividad y la supervision de la posesion de via en campo",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox",
+              "notification-activity-read"
+            ],
+            "mto-field-api": [
+              "field-team",
+              "field-supervise"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read",
+              "maintenance-write"
+            ],
+            "mto-configuration-api": [
+              "config-read"
+            ],
+            "mto-stock-api": [
+              "stock-read"
+            ],
+            "mto-resources-api": [
+              "resources-read",
+              "resources-location-write"
+            ]
+          }
+        }
+      },
+      {
+        "name": "mto-position-chief-supervisor",
+        "description": "Puesto de jefe de supervisores: lo del supervisor y las decisiones de supervision del mantenimiento (cancelar ordenes, completarlas forzando, resolver, cerrar o descartar defectos)",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox",
+              "notification-activity-read"
+            ],
+            "mto-field-api": [
+              "field-team",
+              "field-supervise"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read",
+              "maintenance-write",
+              "maintenance-supervise"
+            ],
+            "mto-configuration-api": [
+              "config-read"
+            ],
+            "mto-stock-api": [
+              "stock-read"
+            ],
+            "mto-resources-api": [
+              "resources-read",
+              "resources-location-write"
+            ]
+          }
+        }
+      },
+      {
+        "name": "mto-position-chief-maintenance",
+        "description": "Puesto de jefe de mantenimiento: todo el mantenimiento (tambien desactivar), el personal, los equipos y la flota, y la lectura de infraestructura, almacen y actividad",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox",
+              "notification-activity-read"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read",
+              "maintenance-write",
+              "maintenance-supervise",
+              "maintenance-delete"
+            ],
+            "mto-configuration-api": [
+              "config-read"
+            ],
+            "mto-stock-api": [
+              "stock-read"
+            ],
+            "mto-resources-api": [
+              "resources-read",
+              "resources-write",
+              "resources-fleet-write",
+              "resources-location-write"
+            ]
+          }
+        }
+      },
+      {
+        "name": "mto-position-project-manager",
+        "description": "Puesto de jefe de proyecto: consulta del mantenimiento, del personal y la flota, de la infraestructura y del almacen, con su bandeja y el registro de actividad",
+        "composite": true,
+        "composites": {
+          "client": {
+            "mto-notification-api": [
+              "notification-inbox",
+              "notification-activity-read"
+            ],
+            "mto-maintenance-api": [
+              "maintenance-read"
+            ],
+            "mto-configuration-api": [
+              "config-read"
+            ],
+            "mto-stock-api": [
+              "stock-read"
+            ],
+            "mto-resources-api": [
+              "resources-read"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

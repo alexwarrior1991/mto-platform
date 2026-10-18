@@ -133,8 +133,8 @@ turno abre una posesion, el servicio inventa el equipo y las tareas quedan pendi
 se prueba el canal sin mantenimiento. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta
 que su CI la publique en GHCR. La reflexion gRPC (`grpcurl -plaintext localhost:9094 list`) se deja
 encendida en local. Un tecnico solo se une a un turno de su equipo: su parcial declara los grupos
-`EQ-NORTE` y `EQ-SUR` (un grupo se llama como el `code` del equipo en `mto-maintenance`),
-`campo.tecnico1` y `campo.tecnico2` estan en uno cada uno, y el mapper `grupos` de `mto-frontend`
+`A` y `B` (un grupo se llama como el `code` del equipo en `mto-maintenance`), `campo.tecnico1` y
+`campo.tecnico2` estan en uno cada uno, y el mapper `grupos` de `mto-frontend`
 los pone en el access token; `campo.responsable` (`field-supervise`) actua por cualquier equipo.
 Desde la fase 4 de `mto-resources`, un turno con la dotacion de `mto-resources` liga por la persona
 (su usuario tiene que estar en la dotacion; un suplente entra sin tocar el realm) y el grupo solo
@@ -399,11 +399,12 @@ Los crea el paso 7. La contraseña de todos es `local`.
 | `mantenimiento.jefe` / `proyecto.jefe` | `mto-position-chief-maintenance` / `mto-position-project-manager` |
 
 Los seis ultimos, uno por puesto, los trae `mto-resources-dev.json`. `equipo.operario` y
-`equipo.jefe` estan en el grupo `EQ-NORTE` (lo declara la parcial de `mto-field`, aplicada antes que
-los ficheros de desarrollo), asi que con `field-team` se unen en `mto-field` a los turnos de ese
-equipo; `equipo.supervisor` y `equipo.jefe-supervisores`, con `field-supervise`, a cualquiera. Los
-grupos `EQ-*` todavia no se llaman como los equipos de mantenimiento (`A`, `B`): unificarlos es de
-la fase siguiente.
+`equipo.jefe` estan en el grupo `A` (lo declara la parcial de `mto-field`, aplicada antes que los
+ficheros de desarrollo), asi que con `field-team` se unen en `mto-field` a los turnos del equipo `A`;
+`equipo.supervisor` y `equipo.jefe-supervisores`, con `field-supervise`, a cualquiera. Hasta que se
+llamaron como los equipos de mantenimiento, los grupos eran `EQ-NORTE` y `EQ-SUR`: la importacion
+parcial no borra nada, asi que en un realm ya cargado se quedan, vacios (los usuarios de desarrollo se
+sobrescriben y pasan a `A` y `B`), y se borran a mano en la consola o con `docker compose down -v`.
 
 ### Pedir un token a mano
 

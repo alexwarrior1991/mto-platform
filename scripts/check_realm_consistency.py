@@ -505,7 +505,7 @@ def ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas):
 
 
 def grupos_de(doc):
-    """Las rutas de los grupos que declara un fichero, con sus subgrupos ("/EQ-NORTE")."""
+    """Las rutas de los grupos que declara un fichero, con sus subgrupos ("/A", "/equipos/A")."""
     rutas = set()
 
     def recorre(grupos, padre):
@@ -524,8 +524,8 @@ def ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas):
     El grupo de equipo es lo que lee la liga de equipo de mto-field: un usuario de desarrollo con un
     grupo mal escrito, o declarado en un fichero que se aplica despues, o rompe la importacion o se
     queda sin grupo, y solo se nota cuando intenta unirse a un turno. Los usuarios de puesto de
-    mto-resources-dev.json entran en EQ-NORTE, que declara mto-field-partial-import.json, aplicado
-    antes que los ficheros de desarrollo.
+    mto-resources-dev.json entran en A (el grupo del equipo A de mto-maintenance), que declara
+    mto-field-partial-import.json, aplicado antes que los ficheros de desarrollo.
     """
     disponibles = set()
     for nombre, doc in orden:

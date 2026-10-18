@@ -136,6 +136,11 @@ encendida en local. Un tecnico solo se une a un turno de su equipo: su parcial d
 `EQ-NORTE` y `EQ-SUR` (un grupo se llama como el `code` del equipo en `mto-maintenance`),
 `campo.tecnico1` y `campo.tecnico2` estan en uno cada uno, y el mapper `grupos` de `mto-frontend`
 los pone en el access token; `campo.responsable` (`field-supervise`) actua por cualquier equipo.
+Desde la fase 4 de `mto-resources`, un turno con la dotacion de `mto-resources` liga por la persona
+(su usuario tiene que estar en la dotacion; un suplente entra sin tocar el realm) y el grupo solo
+decide en uno sin dotacion. El dispositivo dice en el `Join` el vehiculo del turno en el que va, y el
+kp de sus latidos llega a `mto-resources` como su posicion por `mto.field.telemetry.exchange`, cuya cola
+(`mto.resources.field.queue`) declara `mto-resources`; `MTO_FIELD_POSITIONS_ENABLED=false` lo apaga.
 Desde su fase 4 puede correr en varias replicas: `--profile field-cluster` levanta una segunda
 (`mto-field-2`, 8088 y gRPC 9095) sobre la misma base, y las dos se cuentan por el RabbitMQ de la
 plataforma lo que no esta en la base (quien esta conectado a cual, los latidos, hasta donde se ha
@@ -160,8 +165,9 @@ sale por `mto.resources.exchange` hacia la cola `mto.maintenance.resources.queue
 firmado con el mismo `MESSAGING_SIGNATURE_SECRET` que los demas productores. Por eso se levanta con
 el perfil `maintenance`. Un consumidor nuevo (o mantenimiento, la primera vez que declara su cola) se
 pone al dia con `POST /actuator/republish`, con `ops-write` de `mto-resources-api`, que lleva
-`mto-ops`. Su imagen lleva `build` ademas de `image`, como el backoffice, hasta que su CI la publique
-en GHCR. Su parcial trae los perfiles `mto-resources-*`; los perfiles de puesto, que cruzan
+`mto-ops`. Su imagen la publica su CI en GHCR al fusionar en `master` y `docker compose pull resources`
+la trae; lleva `build` ademas de `image`, como el backoffice, para construirla desde el checkout
+hermano cuando no existe (una rama de trabajo). Su parcial trae los perfiles `mto-resources-*`; los perfiles de puesto, que cruzan
 servicios, viven aqui (abajo).
 
 ### Trabajar sobre un servicio
@@ -366,8 +372,11 @@ puesto sin pasar por ese fichero (`check_realm_consistency.py` lo exige).
 | `mto-position-team-leader` | `notification-inbox` | `field-team` | `maintenance-read`, `maintenance-write` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
 | `mto-position-supervisor` | `notification-inbox`, `notification-activity-read` | `field-team`, `field-supervise` | `maintenance-read`, `maintenance-write` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
 | `mto-position-chief-supervisor` | `notification-inbox`, `notification-activity-read` | `field-team`, `field-supervise` | `maintenance-read`, `maintenance-write`, `maintenance-supervise` | `config-read` | `stock-read` | `resources-read`, `resources-location-write` |
-| `mto-position-chief-maintenance` | `notification-inbox`, `notification-activity-read` | — | `maintenance-read`, `maintenance-write`, `maintenance-supervise`, `maintenance-delete` | `config-read` | `stock-read` | `resources-read`, `resources-write`, `resources-fleet-write`, `resources-location-write` |
-| `mto-position-project-manager` | `notification-inbox`, `notification-activity-read` | — | `maintenance-read` | `config-read` | `stock-read` | `resources-read` |
+| `mto-position-chief-maintenance` | `notification-inbox`, `notification-activity-read` | `field-watch` | `maintenance-read`, `maintenance-write`, `maintenance-supervise`, `maintenance-delete` | `config-read` | `stock-read` | `resources-read`, `resources-write`, `resources-fleet-write`, `resources-location-write` |
+| `mto-position-project-manager` | `notification-inbox`, `notification-activity-read` | `field-watch` | `maintenance-read` | `config-read` | `stock-read` | `resources-read` |
+
+`field-watch` es el tablero de una posesion en solo lectura (`WatchPossessionBoard`, sin abrir, cerrar
+ni ordenar nada): el jefe de mantenimiento y el jefe de proyecto siguen la noche desde fuera.
 
 Permiso no es puesto: el perfil dice que puede hacer una persona; a quien dirige y en que EP lo dice
 el organigrama de `mto-resources`, que nunca escribe el realm. Se guardan separados a proposito: un

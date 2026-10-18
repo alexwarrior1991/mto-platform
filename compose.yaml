@@ -53,6 +53,9 @@ x-field-environment: &field-environment
   # (quien esta conectado a que replica, latidos, hasta donde se ha escrito). Con false cada
   # replica se entera de las demas por la base, en cada tic de puesta al dia.
   APP_RABBITMQ_ENABLED: ${MTO_FIELD_RABBITMQ_ENABLED:-true}
+  # La posicion del vehiculo de cada dispositivo (el kp de sus latidos) hacia mto-resources, por su
+  # exchange de telemetria; la cola la declara mto-resources, que tiene que estar levantado antes.
+  APP_FIELD_POSITIONS_ENABLED: ${MTO_FIELD_POSITIONS_ENABLED:-true}
   SPRING_RABBITMQ_HOST: rabbitmq
   SPRING_RABBITMQ_PORT: 5672
   SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-mto}
@@ -593,8 +596,9 @@ services:
   # con el de maintenance. Sin depends_on de maintenance a proposito: esta en otro perfil, y un
   # depends_on obligatorio rompe 'docker compose --profile resources config'.
   #
-  # Lleva 'build' ademas de 'image', como el backoffice: hasta que su CI publique la imagen en GHCR,
-  # compose la construye desde el checkout hermano (../mto-resources).
+  # Lleva 'build' ademas de 'image', como el backoffice: su CI publica la imagen en GHCR al fusionar
+  # en master, y 'docker compose pull resources' la trae; compose solo la construye desde el checkout
+  # hermano (../mto-resources) si esa imagen no existe todavia, como en una rama de trabajo.
   resources:
     image: ghcr.io/alexwarrior1991/mto-resources:${MTO_RESOURCES_TAG:-latest}
     build:

@@ -49,8 +49,9 @@ FICHEROS=(
   "$HERMANOS/mto-gateway/keycloak/mto-gateway-partial-import.json"
   # Personal, organizacion y flota: sus perfiles nombran config-read de mto-configuration-api y la
   # bandeja de mto-notification-api, que ya existen. Va antes que mantenimiento porque los perfiles de
-  # mantenimiento nombran resources-read (sus selectores de dotacion y vehiculos). No tiene cuenta de
-  # servicio: no llama a nadie.
+  # mantenimiento nombran resources-read (sus selectores de dotacion y vehiculos). Trae dos cuentas de
+  # servicio: mto-resources-svc (lee de la Admin API quien tiene cada perfil de puesto) y mto-telematics-svc
+  # (la pasarela de los GPS); sus roles se conceden abajo.
   "$HERMANOS/mto-resources/keycloak/mto-resources-partial-import.json"
   "$HERMANOS/mto-maintenance/keycloak/mto-maintenance-partial-import.json"
   "$HERMANOS/mto-users/keycloak/mto-users-partial-import.json"
@@ -323,6 +324,15 @@ conceder_roles_de_servicio mto-users-svc realm-management view-users query-users
 # lectura del directorio. Nunca manage-events (ni reconfigura ni borra eventos) ni manage-users:
 # es un lector.
 conceder_roles_de_servicio mto-notification-svc realm-management view-events view-users query-users view-clients query-clients view-realm
+
+# mto-resources lee de la Admin API quien tiene cada perfil de puesto (mto-position-*), para su informe de
+# discrepancias entre el perfil y la categoria de cada persona: ver y buscar usuarios, y view-realm, que es
+# lo que pide leer los miembros de un rol de realm. Nada que escriba: ni manage-users ni manage-realm.
+conceder_roles_de_servicio mto-resources-svc realm-management view-users query-users view-realm
+
+# La pasarela de los dispositivos GPS manda sus posiciones a mto-resources con su propia cuenta de servicio:
+# solo resources-telematics-write, que no abre nada mas.
+conceder_roles_de_servicio mto-telematics-svc mto-resources-api resources-telematics-write
 
 # Los eventos del realm no los trae ninguna parcial: son ajustes del realm, no de un cliente, y
 # viven en mto-realm.json (el local los lleva iguales; scripts/check_realm_consistency.py lo

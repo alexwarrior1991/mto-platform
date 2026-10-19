@@ -630,6 +630,13 @@ services:
       KEYCLOAK_CLIENT_ID: mto-resources-api
       KEYCLOAK_AUDIENCE: mto-resources-api
       KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+      # La Admin API de Keycloak, solo para leer quien tiene cada perfil de puesto (el informe de
+      # discrepancias), con la cuenta de servicio de solo lectura mto-resources-svc.
+      KEYCLOAK_AUTH_SERVER_URL: ${KEYCLOAK_AUTH_SERVER_URL:-http://auth.mto.local:8082}
+      KEYCLOAK_REALM: mto
+      KEYCLOAK_TOKEN_URI: ${KEYCLOAK_ISSUER_URI:-http://auth.mto.local:8082/realms/mto}/protocol/openid-connect/token
+      KEYCLOAK_SERVICE_CLIENT_ID: mto-resources-svc
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${MTO_RESOURCES_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
       APP_SECURITY_EXPOSE_API_DOCS: ${APP_SECURITY_EXPOSE_API_DOCS:-true}
       MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
     extra_hosts:

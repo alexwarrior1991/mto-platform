@@ -66,6 +66,8 @@ ROLES_DE_SERVICIO = {
         "realm-management",
         {"view-events", "view-users", "query-users", "view-clients", "query-clients", "view-realm"},
     ),
+    "mto-resources-svc": ("realm-management", {"view-users", "query-users", "view-realm"}),
+    "mto-telematics-svc": ("mto-resources-api", {"resources-telematics-write"}),
 }
 
 # Lo que apply-partials.sh manda a events/config, tal cual lo declara mto-realm.json.

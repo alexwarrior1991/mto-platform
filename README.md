@@ -259,7 +259,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 2 | `mto-configuration-partial-import.json` | configuration | `mto-configuration-api`, `mto-configuration-svc`, sus permisos y sus perfiles |
 | 3 | `mto-stock-partial-import.json` | stock | `mto-stock-api`, sus permisos y los perfiles `mto-warehouse-*` |
 | 4 | `mto-gateway-partial-import.json` | gateway | `mto-gateway-api` y sus roles de operacion |
-| 4b | `mto-resources-partial-import.json` | resources | `mto-resources-api`, sus permisos y los perfiles `mto-resources-*`; sin cuenta de servicio, porque no llama a nadie. Sus perfiles nombran `config-read` de `mto-configuration-api` y la bandeja de `mto-notification-api`, que ya existen. Va antes que mantenimiento porque los perfiles `mto-maintenance-*` nombran `resources-read` |
+| 4b | `mto-resources-partial-import.json` | resources | `mto-resources-api`, sus permisos y los perfiles `mto-resources-*`, y dos cuentas de servicio: `mto-resources-svc` (lee de la Admin API quien tiene cada perfil de puesto, para su informe de discrepancias) y `mto-telematics-svc` (la pasarela de los GPS, con la audiencia `mto-resources-api`). Sus perfiles nombran `config-read` de `mto-configuration-api` y la bandeja de `mto-notification-api`, que ya existen. Va antes que mantenimiento porque los perfiles `mto-maintenance-*` nombran `resources-read` |
 | 5 | `mto-maintenance-partial-import.json` | maintenance | `mto-maintenance-api`, `mto-maintenance-svc`, sus permisos y los perfiles `mto-maintenance-*` |
 | 5b | `mto-users-partial-import.json` | users | `mto-users-api`, `mto-users-svc`, sus permisos y los perfiles `mto-users-*` |
 | 5c | `mto-field-partial-import.json` | field | `mto-field-api`, `mto-field-svc`, sus permisos y los perfiles `mto-field-*`. Su cuenta de servicio nombra `mto-maintenance-api`, que ya existe, y el responsable `notification-inbox` y `notification-activity-read` de `mto-notification-api`, que va la primera |
@@ -267,7 +267,7 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los ocho** (y la bandeja, el registro y la administracion de `mto-notification`) |
 | 6b | `keycloak/mto-positions-cross-service.json` | platform | los perfiles de puesto `mto-position-*` (abajo), que nombran roles de seis API: detras de todas las parciales y delante de los usuarios de desarrollo, que los llevan |
 | 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-field-dev.json` / `mto-resources-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`; los de puesto, en `mto-resources-dev.json`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
-| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc`; `maintenance-read` y `maintenance-write` de `mto-maintenance-api` para `mto-field-svc` |
+| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc`; `maintenance-read` y `maintenance-write` de `mto-maintenance-api` para `mto-field-svc`; `view-users`, `query-users` y `view-realm` para `mto-resources-svc`; `resources-telematics-write` de `mto-resources-api` para `mto-telematics-svc` |
 | 9 | *(API de administracion)* | platform | los eventos del realm tal como los declara `mto-realm.json` (`events/config` y el atributo `adminEventsExpiration`) y, si se aplican los usuarios de desarrollo, el `smtpServer` hacia Mailpit de `mto-realm-local.json` |
 
 El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 1b al 9, `apply-partials.sh`.
@@ -300,12 +300,15 @@ lo comprueba en el CI contra un Keycloak de verdad (abajo).
 El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
 y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
 otro —ni, en el caso de `mto-users`, que puede administrar del realm—; en un entorno desplegado se
-hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` / `mto-notification-svc` / `mto-field-svc` →
-Service accounts roles). `mto-users-svc` lleva solo esos seis roles de `realm-management`: ni
+hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` / `mto-notification-svc` / `mto-field-svc` /
+`mto-resources-svc` / `mto-telematics-svc` → Service accounts roles). `mto-users-svc` lleva solo esos seis roles de `realm-management`: ni
 `manage-realm`, ni `manage-clients`, ni `realm-admin`, y nunca una credencial del realm `master`.
 `mto-notification-svc` es un lector: `view-events` para los eventos y los cinco de solo lectura del
 directorio para poner nombre y correo a una audiencia; nunca `manage-events` (ni reconfigura ni
-borra eventos) ni `manage-users`.
+borra eventos) ni `manage-users`. `mto-resources-svc` tambien solo lee: los usuarios y los miembros de los
+perfiles de puesto (`view-realm` es lo que pide leer los miembros de un rol de realm), para
+`GET /api/resources/reports/position-discrepancies`. `mto-telematics-svc` es la pasarela de los GPS: solo
+`resources-telematics-write`, que no abre nada mas que `POST /telematics/positions`.
 
 El 9 existe porque los eventos del realm son un ajuste del realm, no de un cliente, y ninguna
 parcial los trae. El `--import-realm` del paso 1 ya los aplica, pero solo al crear el realm: un
@@ -432,6 +435,22 @@ Dos cosas que conviene tener presentes:
   la cabecera `Authorization` y se traduce en un **400 con el cuerpo vacío y nada en el log de
   Keycloak**, porque la petición no llega a su código. Es el mismo fallo que documenta
   `apply-partials.sh`, y el síntoma no se parece en nada a su causa.
+
+Las posiciones de un GPS, como las manda su pasarela (con la cuenta de servicio y su secreto de
+desarrollo; el vehiculo lleva ese dispositivo en `telematicsDeviceId`):
+
+```bash
+curl -sS -X POST http://auth.mto.local:8082/realms/mto/protocol/openid-connect/token \
+  -u mto-telematics-svc:mto-telematics-svc-secret -d grant_type=client_credentials -o /tmp/gps.json
+GPS=$(grep -o '"access_token":"[^"]*"' /tmp/gps.json | cut -d'"' -f4)
+curl -sS -X POST http://localhost:8090/api/resources/telematics/positions \
+  -H "Authorization: Bearer $GPS" -H 'Content-Type: application/json' \
+  -d '{"positions":[{"deviceId":"GPS-4471","observedAt":"2026-10-19T05:42:10Z","latitude":32.794046,"longitude":34.989571}]}'
+```
+
+Cada una vuelve con lo que se hizo: `RECORDED` (el vehiculo queda `ON_ROAD`, origen `TELEMATICS`) o
+`IGNORED` con su motivo (un dispositivo de ningun vehiculo, uno de solo via, uno en la via por un turno, o
+menos de 5 minutos desde la anterior).
 
 ## Comprobar que el realm sigue encajando
 

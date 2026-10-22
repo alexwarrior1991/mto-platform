@@ -1,0 +1,154 @@
+# El proyecto del entorno: el namespace que gestiona Argo CD, su cuota, lo que puede tocar el controlador de
+# Argo CD, el pull secret de ghcr.io, la monitorizacion de proyectos de usuario y el operador de RHBK.
+- name: Crear el proyecto {{ mto_namespace }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ mto_namespace }}"
+        labels:
+          # La instancia openshift-gitops recibe admin en el proyecto.
+          argocd.argoproj.io/managed-by: "{{ projects_argocd_namespace }}"
+          app.kubernetes.io/part-of: mto
+          mto.alejandro.com/environment: "{{ mto_environment }}"
+
+- name: Poner la cuota del proyecto
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: mto-quota
+        namespace: "{{ mto_namespace }}"
+      spec:
+        hard: "{{ projects_quota }}"
+
+- name: Poner los recursos por defecto de un contenedor
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: mto-limits
+        namespace: "{{ mto_namespace }}"
+      spec:
+        limits:
+          - type: Container
+            defaultRequest:
+              cpu: "{{ projects_limit_range.default_request_cpu }}"
+              memory: "{{ projects_limit_range.default_request_memory }}"
+            default:
+              memory: "{{ projects_limit_range.default_limit_memory }}"
+            max:
+              memory: "{{ projects_limit_range.max_memory }}"
+
+# admin en el proyecto no siempre alcanza los recursos de los operadores (depende de si OLM agrega sus roles):
+# se conceden explicitamente al controlador de Argo CD, solo en este proyecto.
+- name: Declarar lo que Argo CD tiene que poder crear en los proyectos MTO
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: mto-argocd-resources
+        labels:
+          app.kubernetes.io/part-of: mto
+      rules:
+        - apiGroups: [postgresql.cnpg.io]
+          resources: [clusters, databases]
+          verbs: [get, list, watch, create, update, patch, delete]
+        - apiGroups: [rabbitmq.com]
+          resources: [rabbitmqclusters]
+          verbs: [get, list, watch, create, update, patch, delete]
+        - apiGroups: [k8s.keycloak.org]
+          resources: [keycloaks]
+          verbs: [get, list, watch, create, update, patch, delete]
+        - apiGroups: [cert-manager.io]
+          resources: [certificates]
+          verbs: [get, list, watch, create, update, patch, delete]
+        - apiGroups: [monitoring.coreos.com]
+          resources: [servicemonitors]
+          verbs: [get, list, watch, create, update, patch, delete]
+        - apiGroups: [route.openshift.io]
+          resources: [routes, routes/custom-host]
+          verbs: [get, list, watch, create, update, patch, delete]
+
+- name: Concederlo al controlador de Argo CD en {{ mto_namespace }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: mto-argocd-resources
+        namespace: "{{ mto_namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: mto-argocd-resources
+      subjects:
+        - kind: ServiceAccount
+          name: "{{ projects_argocd_controller_sa }}"
+          namespace: "{{ projects_argocd_namespace }}"
+
+- name: Crear el pull secret de ghcr.io
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/dockerconfigjson
+      metadata:
+        name: ghcr-pull
+        namespace: "{{ mto_namespace }}"
+      data:
+        .dockerconfigjson: >-
+          {{ {'auths': {'ghcr.io': {'auth': (vault_ghcr_username ~ ':' ~ vault_ghcr_token) | b64encode}}}
+             | to_json | b64encode }}
+  when: vault_ghcr_token | default('') | length > 0
+  no_log: true
+
+- name: Leer la cuenta default del proyecto
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ServiceAccount
+    name: default
+    namespace: "{{ mto_namespace }}"
+  register: projects_default_sa
+  when: vault_ghcr_token | default('') | length > 0
+
+# Se anade a los que ya tiene (OpenShift pone el del registro interno): sustituir la lista los perderia.
+- name: Enlazar el pull secret a la cuenta default
+  kubernetes.core.k8s:
+    state: patched
+    api_version: v1
+    kind: ServiceAccount
+    name: default
+    namespace: "{{ mto_namespace }}"
+    definition:
+      imagePullSecrets: >-
+        {{ (projects_default_sa.resources[0].imagePullSecrets | default([]))
+           | rejectattr('name', 'equalto', 'ghcr-pull') | list + [{'name': 'ghcr-pull'}] }}
+  when: vault_ghcr_token | default('') | length > 0
+
+- name: Activar la monitorizacion de proyectos de usuario
+  ansible.builtin.include_tasks: user_workload_monitoring.yml
+  when: projects_enable_user_workload_monitoring | bool
+
+- name: Instalar RHBK en el proyecto
+  ansible.builtin.include_role:
+    name: operators
+    tasks_from: operator.yml
+  vars:
+    operators_item:
+      name: rhbk-operator
+      namespace: "{{ mto_namespace }}"
+      own_namespace: true
+      operator_group: mto-operators
+      channel: "{{ projects_rhbk_channel }}"
+      source: redhat-operators

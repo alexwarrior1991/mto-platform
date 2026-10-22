@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mto-realm
+description: Aplica el realm mto de un entorno con keycloak-config-cli (el base y las parciales de cada repositorio, sin ficheros de desarrollo) y comprueba lo aplicado con check_applied_realm.py.
+type: application
+version: 0.1.0

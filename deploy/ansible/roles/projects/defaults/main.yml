@@ -1,0 +1,24 @@
+# La cuota del proyecto (cada inventario pone la suya).
+projects_quota:
+  requests.cpu: "16"
+  requests.memory: 48Gi
+  limits.memory: 96Gi
+  persistentvolumeclaims: "20"
+  requests.storage: 200Gi
+
+# Lo que recibe un contenedor que no dice sus recursos (un pod de un operador, por ejemplo): con la cuota de
+# limits.memory, sin limite no arrancaria.
+projects_limit_range:
+  default_request_cpu: 100m
+  default_request_memory: 256Mi
+  default_limit_memory: 512Mi
+  max_memory: 8Gi
+
+projects_enable_user_workload_monitoring: true
+
+# RHBK (Keycloak de Red Hat) solo se instala por namespace: va en el proyecto.
+projects_rhbk_channel: stable-v26
+
+# La instancia de Argo CD de OpenShift GitOps y la cuenta de su controlador.
+projects_argocd_namespace: openshift-gitops
+projects_argocd_controller_sa: openshift-gitops-argocd-application-controller

@@ -1,0 +1,24 @@
+# Lo que el entorno cambia del realm, el mismo fichero que leen build_realm_import.py y
+# check_applied_realm.py --overrides (deploy/keycloak/overrides.example.json): las URLs de los dos clientes de
+# login y el SMTP del correo de acciones de Keycloak (la contrasena, del Secret mto-keycloak-client-secrets).
+overrides:
+  clients:
+    mto-frontend:
+      rootUrl: "{{ .Values.global.frontendUrl }}"
+      redirectUris: ["{{ .Values.global.frontendUrl }}/*"]
+      webOrigins: ["{{ .Values.global.frontendUrl }}"]
+      attributes:
+        post.logout.redirect.uris: "{{ .Values.global.frontendUrl }}/*"
+    mto-backoffice:
+      rootUrl: "{{ .Values.global.backofficeUrl }}"
+      redirectUris: ["{{ .Values.global.backofficeUrl }}/login/oauth2/code/keycloak"]
+      attributes:
+        post.logout.redirect.uris: "{{ .Values.global.backofficeUrl }}/*"
+  realm:
+    smtpServer:
+      host: "{{ .Values.global.mail.host }}"
+      port: "{{ .Values.global.mail.port }}"
+      from: "{{ .Values.global.mail.from }}"
+      auth: "{{ .Values.global.mail.auth }}"
+      starttls: "{{ .Values.global.mail.starttls }}"
+      user: "{{ .Values.global.mail.user }}"

@@ -1,0 +1,25 @@
+# El broker de mto-infra (RabbitmqCluster mto-rabbitmq): su usuario lo genera el operador en
+# mto-rabbitmq-default-user.
+env:
+  SPRING_RABBITMQ_HOST: mto-rabbitmq
+  SPRING_RABBITMQ_PORT: "5672"
+  # Las colas de los consumidores (mto-stock, mto-maintenance, mto-notification y mto-resources) son quorum
+  # en OpenShift: sobreviven a la caida de un nodo. Las demas aplicaciones no leen esta variable.
+  APP_RABBITMQ_QUEUES_TYPE: quorum
+  APP_RABBITMQ_QUEUES_DELIVERY_LIMIT: "5"
+  # Todos firman con el mismo secreto (mto-messaging, del vault), asi que un consumidor puede exigir la
+  # firma: un mensaje sin ella o con otra va a la DLQ.
+  MESSAGING_SIGNATURE_MODE: REQUIRED
+  SPRING_RABBITMQ_LISTENER_OBSERVATION_ENABLED: "true"
+  MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+
+secretEnv:
+  SPRING_RABBITMQ_USERNAME:
+    secret: mto-rabbitmq-default-user
+    key: username
+  SPRING_RABBITMQ_PASSWORD:
+    secret: mto-rabbitmq-default-user
+    key: password
+  MESSAGING_SIGNATURE_SECRET:
+    secret: mto-messaging
+    key: signature-secret

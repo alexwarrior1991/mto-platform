@@ -1,0 +1,17 @@
+{{- if .Values.certificate.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mto-service.name" . }}
+  labels:
+    {{- include "mto-service.labels" . | nindent 4 }}
+spec:
+  secretName: {{ required "certificate.secretName es obligatorio" .Values.certificate.secretName }}
+  dnsNames:
+    {{- range .Values.certificate.dnsNames }}
+    - {{ tpl . $ }}
+    {{- end }}
+  issuerRef:
+    kind: {{ .Values.certificate.issuerRef.kind }}
+    name: {{ required "certificate.issuerRef.name es obligatorio" .Values.certificate.issuerRef.name }}
+{{- end }}

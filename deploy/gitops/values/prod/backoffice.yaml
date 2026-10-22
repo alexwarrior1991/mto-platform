@@ -1,0 +1,5 @@
+# Mas replicas no reparten mejor: cada sesion vive en su pod. Las justas para no perder el servicio en un
+# despliegue o en un drenado de nodo (PDB).
+hpa:
+  minReplicas: 2
+  maxReplicas: 3

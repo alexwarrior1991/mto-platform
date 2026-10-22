@@ -1,0 +1,40 @@
+name: mto-notification
+image:
+  repository: ghcr.io/alexwarrior1991/mto-notification
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  DATABASE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_notification
+  APP_RABBITMQ_ENABLED: "true"
+  KEYCLOAK_CLIENT_ID: mto-notification-api
+  KEYCLOAK_AUDIENCE: mto-notification-api
+  # La Admin API (los eventos del realm), por la misma URL que emite los tokens.
+  KEYCLOAK_AUTH_SERVER_URL: "{{ .Values.global.keycloakUrl }}"
+  KEYCLOAK_REALM: mto
+  KEYCLOAK_TOKEN_URI: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-notification-svc
+  # Los enlaces de los correos llevan a la misma pantalla en el backoffice.
+  APP_NOTIFICATION_LINK_BASE_URL: "{{ .Values.global.backofficeUrl }}"
+  APP_NOTIFICATION_EMAIL_FROM: "{{ .Values.global.mail.from }}"
+  SPRING_MAIL_HOST: "{{ .Values.global.mail.host }}"
+  SPRING_MAIL_PORT: "{{ .Values.global.mail.port }}"
+  SPRING_MAIL_SMTP_AUTH: "{{ .Values.global.mail.auth }}"
+  SPRING_MAIL_SMTP_STARTTLS: "{{ .Values.global.mail.starttls }}"
+  MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+
+secretEnv:
+  DATABASE_USERNAME:
+    secret: mto-db-notification
+    key: username
+  DATABASE_PASSWORD:
+    secret: mto-db-notification
+    key: password
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_NOTIFICATION_SVC
+  SPRING_MAIL_USERNAME:
+    secret: mto-smtp
+    key: username
+  SPRING_MAIL_PASSWORD:
+    secret: mto-smtp
+    key: password

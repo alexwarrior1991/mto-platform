@@ -1,0 +1,38 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mto-service.name" . }}
+  labels:
+    {{- include "mto-service.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mto-service.selector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+      scheme: http
+      # El Actuator pide ops-metrics del API del servicio y su audiencia: el token lo da mto-metrics-svc.
+      oauth2:
+        tokenUrl: {{ tpl (required "serviceMonitor.oauth2.tokenUrl es obligatorio" .Values.serviceMonitor.oauth2.tokenUrl) $ }}
+        clientId:
+          secret:
+            name: {{ include "mto-service.name" . }}-metrics-client
+            key: clientId
+        clientSecret:
+          name: {{ .Values.serviceMonitor.oauth2.clientSecret.name }}
+          key: {{ .Values.serviceMonitor.oauth2.clientSecret.key }}
+---
+# El clientId de oauth2 tiene que venir de un Secret o un ConfigMap, aunque no sea secreto.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mto-service.name" . }}-metrics-client
+  labels:
+    {{- include "mto-service.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  clientId: {{ .Values.serviceMonitor.oauth2.clientId }}
+{{- end }}

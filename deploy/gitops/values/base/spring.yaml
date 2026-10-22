@@ -1,0 +1,21 @@
+# Lo que comparten los servicios Spring Boot en cualquier entorno. Encima van rabbitmq.yaml (los que usan el
+# broker), el fichero de cada servicio, y luego los del entorno (values/<entorno>/).
+image:
+  pullPolicy: Always
+
+env:
+  SERVER_PORT: "8080"
+  # Las sondas /actuator/health/liveness y /readiness siempre, no por autodeteccion de Kubernetes.
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  KEYCLOAK_ISSUER_URI: "{{ .Values.global.keycloakUrl }}/realms/mto"
+  KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "true"
+  APP_SECURITY_EXPOSE_API_DOCS: "false"
+  # Las trazas, solo si el entorno tiene colector OTLP (global.tracing).
+  MTO_TRACING_ENABLED: "{{ .Values.global.tracing.enabled }}"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "{{ .Values.global.tracing.endpoint }}"
+
+# /actuator/prometheus pide ops-metrics del API del servicio: el token, de mto-metrics-svc.
+serviceMonitor:
+  enabled: true
+  oauth2:
+    tokenUrl: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"

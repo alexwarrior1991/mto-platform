@@ -1,0 +1,71 @@
+# El entorno: lo ponen values-staging.yaml y values-prod.yaml.
+environment: ""
+namespace: ""
+
+# El repositorio y la revision de los que Argo CD lee los charts y los values (este, mto-platform). Los pone
+# la Application raiz que crea deploy/ansible (argocd_repo_url y argocd_target_revision del inventario), la
+# misma revision para ella y para sus hijas: promover un entorno es cambiar la de su inventario.
+repoURL: https://github.com/alexwarrior1991/mto-platform.git
+targetRevision: master
+
+# El proyecto de Argo CD y su instancia (la de OpenShift GitOps).
+project: default
+argocdNamespace: openshift-gitops
+
+# Cada Application: su chart (deploy/gitops/charts/<chart>), su onda y sus ficheros de values. Por cada
+# fichero f se leen, en este orden, values/base/f, values/<entorno>/common.yaml y values/<entorno>/f; uno
+# que no exista se salta (ignoreMissingValueFiles).
+#
+# Las ondas esperan a que la anterior este Healthy (la comprobacion de salud de Application que deploy/ansible
+# anade a Argo CD): primero la infraestructura y el realm; mto-maintenance antes que mto-resources (que publica
+# con mandatory=true hacia la cola de mantenimiento) y mto-resources antes que mto-field (la cola de sus
+# posiciones es de mto-resources); el gateway cuando ya estan los servicios y los frontales al final.
+applications:
+  - name: infra
+    chart: mto-infra
+    wave: 0
+    valueFiles: [infra.yaml]
+  - name: realm
+    chart: mto-realm
+    wave: 1
+    valueFiles: [realm.yaml]
+  - name: notification
+    chart: mto-service
+    wave: 2
+    valueFiles: [spring.yaml, rabbitmq.yaml, notification.yaml]
+  - name: configuration
+    chart: mto-service
+    wave: 2
+    valueFiles: [spring.yaml, rabbitmq.yaml, configuration.yaml]
+  - name: stock
+    chart: mto-service
+    wave: 2
+    valueFiles: [spring.yaml, rabbitmq.yaml, stock.yaml]
+  - name: users
+    chart: mto-service
+    wave: 2
+    valueFiles: [spring.yaml, rabbitmq.yaml, users.yaml]
+  - name: maintenance
+    chart: mto-service
+    wave: 3
+    valueFiles: [spring.yaml, rabbitmq.yaml, maintenance.yaml]
+  - name: resources
+    chart: mto-service
+    wave: 4
+    valueFiles: [spring.yaml, rabbitmq.yaml, resources.yaml]
+  - name: field
+    chart: mto-service
+    wave: 5
+    valueFiles: [spring.yaml, rabbitmq.yaml, field.yaml]
+  - name: gateway
+    chart: mto-service
+    wave: 6
+    valueFiles: [spring.yaml, gateway.yaml]
+  - name: backoffice
+    chart: mto-service
+    wave: 7
+    valueFiles: [spring.yaml, backoffice.yaml]
+  - name: frontend
+    chart: mto-service
+    wave: 7
+    valueFiles: [frontend.yaml]

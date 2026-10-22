@@ -1,0 +1,27 @@
+# Lo que es de produccion y comparten todas sus Applications. Los nombres de host son de ejemplo.
+global:
+  environment: prod
+  appsDomain: apps.example.com
+  keycloakUrl: https://mto-auth.apps.example.com
+  frontendUrl: https://mto.apps.example.com
+  backofficeUrl: https://mto-backoffice.apps.example.com
+  tracing:
+    enabled: false
+    endpoint: ""
+  mail:
+    host: smtp.example.com
+    port: "587"
+    from: notificaciones@example.com
+    auth: "true"
+    starttls: "true"
+    user: mto-notificaciones
+
+# Promover a produccion es cambiar este tag (o el de un servicio, en su fichero) por el sha-<commit> que ya
+# paso por staging; latest solo hasta la primera promocion.
+image:
+  tag: latest
+  pullPolicy: IfNotPresent
+# El maximo cuenta en las conexiones a PostgreSQL (postgres.parameters.max_connections de mto-infra).
+hpa:
+  minReplicas: 2
+  maxReplicas: 4

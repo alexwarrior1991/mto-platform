@@ -1,0 +1,10 @@
+# ansible-galaxy collection install -r requirements.yml -p collections
+#
+# redhat.openshift es la coleccion certificada de Red Hat: su version 4 se instala de Automation Hub
+# (console.redhat.com), con el token en ansible.cfg o en ANSIBLE_GALAXY_SERVER_<SERVIDOR>_TOKEN (deploy/README.md).
+# Es community.okd con otro nombre, la de Galaxy: con el mismo openshift_auth, el CI la instala con ese nombre.
+collections:
+  - name: redhat.openshift
+    version: ">=4.0.0"
+  - name: kubernetes.core
+    version: ">=5.0.0"

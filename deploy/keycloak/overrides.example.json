@@ -1,0 +1,15 @@
+{
+  "clients": {
+    "mto-frontend": {
+      "rootUrl": "https://mto.apps.example.com",
+      "redirectUris": ["https://mto.apps.example.com/*"],
+      "webOrigins": ["https://mto.apps.example.com"],
+      "attributes": {"post.logout.redirect.uris": "https://mto.apps.example.com/*"}
+    },
+    "mto-backoffice": {
+      "rootUrl": "https://mto-backoffice.apps.example.com",
+      "redirectUris": ["https://mto-backoffice.apps.example.com/login/oauth2/code/keycloak"],
+      "attributes": {"post.logout.redirect.uris": "https://mto-backoffice.apps.example.com/*"}
+    }
+  }
+}

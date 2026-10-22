@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mto-infra
+description: La infraestructura de un entorno MTO en OpenShift (PostgreSQL de CloudNativePG, RabbitMQ, Redis y Keycloak de RHBK), sobre los operadores que instala deploy/ansible.
+type: application
+version: 0.1.0

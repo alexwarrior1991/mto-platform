@@ -1,0 +1,29 @@
+# staging. Los secretos, en vault.yml al lado (vault.example.yml dice cuales).
+mto_environment: staging
+mto_namespace: mto-staging
+
+# La API del cluster y si se comprueba su certificado.
+openshift_api_url: https://api.staging.example.com:6443
+openshift_validate_certs: true
+
+# Lo que Argo CD lee de Git: este repositorio, en esta revision (deploy/gitops/apps con values-staging.yaml),
+# la raiz y todas sus hijas.
+argocd_repo_url: https://github.com/alexwarrior1991/mto-platform.git
+argocd_target_revision: master
+
+# La cuota del proyecto: con holgura sobre lo que piden los charts con el HPA al maximo y los operadores.
+projects_quota:
+  requests.cpu: "16"
+  requests.memory: 48Gi
+  limits.memory: 96Gi
+  persistentvolumeclaims: "20"
+  requests.storage: 200Gi
+
+# Monitorizacion de proyectos de usuario (para los ServiceMonitor). Toca la configuracion del cluster: se
+# anade enableUserWorkload a cluster-monitoring-config conservando lo que ya tenga.
+projects_enable_user_workload_monitoring: true
+
+# ODF: solo la suscripcion (el StorageCluster es del cluster). Hace falta un StorageClass ReadWriteMany para el
+# PVC de mto-configuration; si el cluster ya lo tiene, false.
+operators_odf_enabled: true
+operators_odf_channel: stable-4.18

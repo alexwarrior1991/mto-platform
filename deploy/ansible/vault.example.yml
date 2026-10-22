@@ -1,0 +1,51 @@
+# El vault de un entorno: copiese a inventories/<entorno>/group_vars/all/vault.yml, rellenese y cifrese
+#
+#   ansible-vault encrypt inventories/staging/group_vars/all/vault.yml
+#
+# Ese fichero esta en .gitignore. Cada secreto es distinto por entorno; uno vacio para el playbook antes de
+# crear nada (role secrets). Para generar uno: openssl rand -base64 32 | tr -d '/+=' | cut -c1-32
+vault_openshift_username: ""
+vault_openshift_password: ""
+
+# La contrasena de cada rol de PostgreSQL (el usuario es el de 01-databases.sql).
+vault_db_passwords:
+  configuration: ""
+  stock: ""
+  maintenance: ""
+  notification: ""
+  field: ""
+  resources: ""
+  keycloak: ""
+
+vault_redis_password: ""
+
+# La firma de los mensajes de RabbitMQ: la misma para todos los productores y consumidores del entorno.
+vault_messaging_signature_secret: ""
+
+# El administrador de arranque de Keycloak (con el entra el Job del realm).
+vault_keycloak_admin_username: admin
+vault_keycloak_admin_password: ""
+
+# El secreto de cada cliente confidencial del realm (KC_CLIENT_SECRET_<CLIENTID>): lo pone el Job del realm en
+# Keycloak y lo leen los servicios. Los nombres, los de deploy/keycloak/build_realm_import.py.
+vault_keycloak_client_secrets:
+  MTO_CONFIGURATION_SVC: ""
+  MTO_MAINTENANCE_SVC: ""
+  MTO_USERS_SVC: ""
+  MTO_NOTIFICATION_SVC: ""
+  MTO_RESOURCES_SVC: ""
+  MTO_TELEMATICS_SVC: ""
+  MTO_FIELD_SVC: ""
+  MTO_METRICS_SVC: ""
+  MTO_BACKOFFICE: ""
+
+# El correo de mto-notification y de Keycloak.
+vault_smtp_username: ""
+vault_smtp_password: ""
+
+# Las imagenes de ghcr.io, si el paquete es privado (vacio: sin pull secret).
+vault_ghcr_username: ""
+vault_ghcr_token: ""
+
+# Los repositorios hermanos que clona el Job del realm, si son privados (vacio: sin token).
+vault_git_token: ""

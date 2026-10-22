@@ -1,0 +1,119 @@
+# Valores por defecto del chart. Cada servicio y entorno los cambia en deploy/gitops/values/<entorno>/,
+# primero common.yaml (lo que comparten los servicios Spring) y luego el suyo.
+
+# Lo que comparte un entorno (dominio de las rutas, URL de Keycloak, de los frontales...): lo pone
+# values/<entorno>/common.yaml, y env, route.host, certificate.dnsNames y serviceMonitor.oauth2.tokenUrl
+# lo pueden usar como plantilla: "{{ .Values.global.keycloakUrl }}/realms/mto".
+global: {}
+
+# Nombre de todos los recursos (Deployment, Service, Route...): mto-<servicio>.
+name: ""
+
+image:
+  repository: ""
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicas: 2
+
+# Puerto HTTP del contenedor: el Actuator (y la API) de los Spring, nginx en el frontal.
+port: 8080
+# Otros puertos del contenedor, que tambien expone el Service (el gRPC de mto-field).
+extraPorts: []
+#  - name: grpc
+#    port: 9090
+#    appProtocol: kubernetes.io/h2c   # opcional: lo que el puerto habla, para quien lo lea
+
+# Variables de entorno: NOMBRE: valor. Un mapa, para que common.yaml y el fichero del servicio se mezclen.
+# Cada valor pasa por tpl: puede nombrar .Values.global. Una variable que queda vacia no se pone (el
+# servicio usa entonces su valor por defecto): asi un global vacio, como el colector de trazas, la apaga.
+env: {}
+# Variables que salen de un Secret: NOMBRE: {secret: nombre, key: clave}.
+secretEnv: {}
+
+probes:
+  # Las de Spring Boot (management.endpoint.health.probes.enabled); el frontal las cambia por /healthz.
+  liveness:
+    path: /actuator/health/liveness
+  readiness:
+    path: /actuator/health/readiness
+  # Lo que tarda en arrancar: Flyway y el contexto de Spring. Mientras, ni liveness ni readiness cuentan.
+  startup:
+    path: /actuator/health/liveness
+    failureThreshold: 30
+    periodSeconds: 5
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# Cuanto se le da al apagado antes del SIGKILL: el apagado ordenado de Spring (30 s por fase) y lo que
+# necesite cada servicio (mto-field: la gracia de los streams gRPC y su adios al bus de replicas).
+terminationGracePeriodSeconds: 45
+
+podAnnotations: {}
+
+# Volumenes y montajes tal cual (el secreto TLS de mto-field, por ejemplo).
+volumes: []
+volumeMounts: []
+
+# Un PVC propio del servicio (mto-configuration: los ficheros de los trabajos, ReadWriteMany en /data).
+persistence:
+  enabled: false
+  mountPath: /data
+  accessMode: ReadWriteMany
+  size: 5Gi
+  storageClassName: ""
+
+service:
+  annotations: {}
+  # ClusterIP; LoadBalancer para exponer el gRPC de mto-field sin router.
+  type: ClusterIP
+
+route:
+  enabled: false
+  host: ""
+  # Puerto del Service al que va la ruta: "http", o "grpc" en mto-field.
+  targetPort: http
+  annotations: {}
+  # Afinidad por cookie con nombre propio (mto-backoffice). Exige que el router vea el HTTP: no admite passthrough.
+  cookieName: ""
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  cpuUtilization: 75
+
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+# Prometheus (monitorizacion de usuario de OpenShift) raspa /actuator/prometheus, que pide un token con
+# ops-metrics del API del servicio: lo pide con la cuenta mto-metrics-svc (oauth2 client_credentials).
+serviceMonitor:
+  enabled: false
+  path: /actuator/prometheus
+  interval: 30s
+  oauth2:
+    tokenUrl: ""
+    clientId: mto-metrics-svc
+    # Secret con el secreto de mto-metrics-svc (lo crea Ansible).
+    clientSecret:
+      name: mto-keycloak-client-secrets
+      key: KC_CLIENT_SECRET_MTO_METRICS_SVC
+
+# Un certificado de cert-manager (mto-field: el de la ruta passthrough, con el host publico).
+certificate:
+  enabled: false
+  secretName: ""
+  dnsNames: []
+  issuerRef:
+    kind: ClusterIssuer
+    name: ""

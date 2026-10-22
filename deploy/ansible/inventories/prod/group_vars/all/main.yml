@@ -1,0 +1,22 @@
+# produccion. Los secretos, en vault.yml al lado (vault.example.yml dice cuales).
+mto_environment: prod
+mto_namespace: mto-prod
+
+openshift_api_url: https://api.example.com:6443
+openshift_validate_certs: true
+
+argocd_repo_url: https://github.com/alexwarrior1991/mto-platform.git
+# La revision que sigue produccion, la raiz y sus hijas: una etiqueta o un commit que ya paso por staging.
+argocd_target_revision: master
+
+projects_quota:
+  requests.cpu: "32"
+  requests.memory: 96Gi
+  limits.memory: 192Gi
+  persistentvolumeclaims: "30"
+  requests.storage: 500Gi
+
+projects_enable_user_workload_monitoring: true
+
+operators_odf_enabled: true
+operators_odf_channel: stable-4.18

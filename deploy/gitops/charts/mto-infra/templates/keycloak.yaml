@@ -1,0 +1,62 @@
+{{- $hostname := tpl .Values.keycloak.hostname . -}}
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: {{ .Values.keycloak.name }}
+  labels:
+    {{- include "mto-infra.labels" . | nindent 4 }}
+  annotations:
+    # Despues de su base (onda 1 de las Database).
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  instances: {{ .Values.keycloak.instances }}
+  {{- with .Values.keycloak.image }}
+  image: {{ . }}
+  {{- end }}
+  bootstrapAdmin:
+    user:
+      secret: {{ .Values.keycloak.adminSecret }}
+  db:
+    vendor: postgres
+    host: {{ .Values.postgres.name }}-rw
+    database: keycloak
+    usernameSecret:
+      name: mto-db-keycloak
+      key: username
+    passwordSecret:
+      name: mto-db-keycloak
+      key: password
+    poolMaxSize: {{ .Values.keycloak.dbPoolMaxSize }}
+  # El 'iss' de los tokens es siempre esta URL, se llegue por la Route o por el Service (los servicios
+  # validan contra ella; el Job del realm entra por el Service).
+  hostname:
+    hostname: {{ required "keycloak.hostname (global.keycloakUrl) es obligatorio" $hostname }}
+    backchannelDynamic: true
+  # TLS en el router (Route edge): el pod habla HTTP y confia en las X-Forwarded del router.
+  http:
+    httpEnabled: true
+  proxy:
+    headers: xforwarded
+  ingress:
+    enabled: false
+  resources:
+    {{- toYaml .Values.keycloak.resources | nindent 4 }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ .Values.keycloak.name }}
+  labels:
+    {{- include "mto-infra.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  host: {{ default (include "mto-infra.host" $hostname) .Values.keycloak.routeHost }}
+  to:
+    kind: Service
+    name: {{ .Values.keycloak.name }}-service
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

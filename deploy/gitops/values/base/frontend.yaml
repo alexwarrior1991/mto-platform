@@ -1,0 +1,35 @@
+name: mto-frontend
+image:
+  repository: ghcr.io/alexwarrior1991/mto-frontend
+  pullPolicy: Always
+
+env:
+  MTO_OIDC_AUTHORITY: "{{ .Values.global.keycloakUrl }}/realms/mto"
+  MTO_OIDC_CLIENT_ID: mto-frontend
+  # Con el FQDN: el resolver de nginx no usa los dominios de busqueda del pod.
+  MTO_GATEWAY_URL: "http://mto-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080"
+  MTO_ENVIRONMENT: "{{ .Values.global.environment }}"
+  MTO_BACKOFFICE_URL: "{{ .Values.global.backofficeUrl }}"
+
+probes:
+  liveness:
+    path: /healthz
+  readiness:
+    path: /healthz
+  startup:
+    path: /healthz
+    failureThreshold: 10
+    periodSeconds: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+terminationGracePeriodSeconds: 30
+
+route:
+  enabled: true
+  host: '{{ trimPrefix "https://" .Values.global.frontendUrl }}'

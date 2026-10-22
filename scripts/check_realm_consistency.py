@@ -445,6 +445,39 @@ def el_perfil_de_explotacion_cubre_los_tres(orden, cruzado, problemas):
         )
 
 
+def la_cuenta_de_metricas_llega_a_todo_api_con_metricas(orden, metricas, problemas):
+    """mto-metrics-svc emite audiencia hacia todo API que declara ops-metrics, y no hace nada mas.
+
+    Prometheus raspa /actuator/prometheus de cada servicio con un token de esa cuenta, y siete de los
+    ocho servicios validan que su clientId este en 'aud': un API nuevo con metricas y sin su audience
+    mapper aqui se quedaria sin raspar, con un 401 en el ServiceMonitor que nadie mira. Y es una cuenta
+    de servicio, no un cliente de login: si abriera el flujo de codigo, cualquiera podria entrar con ella.
+    """
+    cuenta = clientes_de(metricas).get("mto-metrics-svc")
+    if cuenta is None:
+        problemas.error(
+            "mto-metrics-cross-service.json no define mto-metrics-svc",
+            "  Es la cuenta con la que los ServiceMonitor piden el token de las metricas.",
+        )
+        return
+    con_metricas = sorted({cliente for _, doc in orden for cliente, roles in roles_de_cliente(doc).items()
+                           if "ops-metrics" in roles})
+    faltan = [api for api in con_metricas if api not in audiencias_de(cuenta)]
+    if faltan:
+        problemas.error(
+            "la cuenta de las metricas no emite audiencia para todos los API con metricas",
+            f"  Faltan los audience mapper hacia: {faltan}\n"
+            f"  El ServiceMonitor de ese servicio recibiria un 401: anadase a mto-metrics-cross-service.json\n"
+            f"  y su ops-metrics a apply-partials.sh y a ROLES_DE_SERVICIO de check_applied_realm.py.",
+        )
+    abiertos = [c for c in ("standardFlowEnabled", "implicitFlowEnabled", "directAccessGrantsEnabled") if cuenta.get(c)]
+    if not cuenta.get("serviceAccountsEnabled") or abiertos or cuenta.get("publicClient"):
+        problemas.error(
+            "mto-metrics-svc no es solo una cuenta de servicio confidencial",
+            f"  Tiene que ser confidencial, con serviceAccountsEnabled y sin flujos de persona; abre: {abiertos}.",
+        )
+
+
 # Los roles de realm que Keycloak crea con el realm: un usuario puede llevarlos sin que ningun
 # fichero los declare.
 ROLES_DE_REALM_DE_FABRICA = {"offline_access", "uma_authorization", "default-roles-mto"}
@@ -595,6 +628,7 @@ def main():
     local = leer(plataforma / "mto-realm-local.json")
     cruzado = leer(plataforma / "mto-ops-cross-service.json")
     puestos = leer(plataforma / "mto-positions-cross-service.json")
+    metricas = leer(plataforma / "mto-metrics-cross-service.json")
 
     # El mismo orden en el que apply-partials.sh los aplica. Si cambia alli, cambia aqui.
     orden = [
@@ -614,6 +648,8 @@ def main():
         # Nombra roles de seis API: detras de todas las parciales. Y delante de los ficheros de
         # desarrollo, porque los usuarios de puesto de mto-resources-dev.json llevan sus perfiles.
         ("mto-positions-cross-service.json", puestos),
+        # La cuenta de las metricas: audiencia hacia los ocho API, que ya existen.
+        ("mto-metrics-cross-service.json", metricas),
         ("mto-notification-dev.json", leer(raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json")),
         ("mto-configuration-dev.json", leer(raiz / "mto-configuration" / "keycloak" / "mto-configuration-dev.json")),
         ("mto-stock-dev.json", leer(raiz / "mto-stock" / "keycloak" / "mto-stock-dev.json")),
@@ -637,6 +673,7 @@ def main():
     ningun_cliente_se_declara_dos_veces_distinto(orden, problemas)
     el_perfil_de_explotacion_cubre_los_tres(parciales, cruzado, problemas)
     los_perfiles_de_puesto_son_planos(puestos, problemas)
+    la_cuenta_de_metricas_llega_a_todo_api_con_metricas(parciales, metricas, problemas)
     ningun_usuario_lleva_un_perfil_que_aun_no_existe(orden, problemas)
     ningun_usuario_entra_en_un_grupo_que_aun_no_existe(orden, problemas)
 

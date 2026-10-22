@@ -1,0 +1,31 @@
+# Lo que es de staging y comparten todas sus Applications. Los nombres de host son de ejemplo: el dominio
+# de aplicaciones del cluster (oc get ingresses.config cluster -o jsonpath='{.spec.domain}'). Cada host es un
+# solo nivel bajo ese dominio (mto-auth.<dominio>, no auth.mto.<dominio>): las Routes sin certificado propio
+# usan el comodin *.<dominio> del router, que no cubre un nivel mas.
+global:
+  environment: staging
+  appsDomain: apps.staging.example.com
+  keycloakUrl: https://mto-auth.apps.staging.example.com
+  frontendUrl: https://mto.apps.staging.example.com
+  backofficeUrl: https://mto-backoffice.apps.staging.example.com
+  # Un colector OTLP (Red Hat build of OpenTelemetry, por ejemplo); sin el, sin trazas.
+  tracing:
+    enabled: false
+    endpoint: ""
+  # El correo de mto-notification y de Keycloak. El usuario y la contrasena, del vault (Secret mto-smtp y
+  # KC_SMTP_PASSWORD); mail.user es el mismo usuario, que Keycloak no lee de un Secret.
+  mail:
+    host: smtp.example.com
+    port: "587"
+    from: notificaciones@example.com
+    auth: "true"
+    starttls: "true"
+    user: mto-notificaciones
+
+# Lo que sigue solo lo leen los servicios (mto-service): en staging, la ultima imagen de master y menos
+# recursos.
+image:
+  tag: latest
+hpa:
+  minReplicas: 2
+  maxReplicas: 3

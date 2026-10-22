@@ -1,0 +1,75 @@
+# Argo CD (la instancia de OpenShift GitOps) y la Application raiz del entorno. A partir de aqui todo sale de
+# Git: deploy/gitops/apps genera una Application por pieza, en ondas.
+- name: Esperar a la instancia de Argo CD de OpenShift GitOps
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: "{{ argocd_instance }}"
+    namespace: "{{ argocd_namespace }}"
+  register: argocd_instance_info
+  until: argocd_instance_info.resources | length > 0
+  retries: 30
+  delay: 10
+
+# Sin esto Argo CD no mira la salud de una Application hija, y las ondas de la App of Apps no esperan: los
+# servicios llegarian antes que su base y su realm. Es la comprobacion de la documentacion de Argo CD. Sustituye
+# la lista resourceHealthChecks de la instancia: si ya tenia otras, se anaden aqui.
+- name: Hacer que las ondas esperen a que cada Application este sana
+  kubernetes.core.k8s:
+    state: patched
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: "{{ argocd_instance }}"
+    namespace: "{{ argocd_namespace }}"
+    definition:
+      spec:
+        resourceHealthChecks:
+          - group: argoproj.io
+            kind: Application
+            check: |
+              hs = {}
+              hs.status = "Progressing"
+              hs.message = ""
+              if obj.status ~= nil then
+                if obj.status.health ~= nil then
+                  hs.status = obj.status.health.status
+                  if obj.status.health.message ~= nil then
+                    hs.message = obj.status.health.message
+                  end
+                end
+              end
+              return hs
+
+- name: Crear la Application raiz de {{ mto_environment }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "mto-{{ mto_environment }}"
+        namespace: "{{ argocd_namespace }}"
+        labels:
+          app.kubernetes.io/part-of: mto
+          mto.alejandro.com/environment: "{{ mto_environment }}"
+      spec:
+        project: default
+        source:
+          repoURL: "{{ argocd_repo_url }}"
+          targetRevision: "{{ argocd_target_revision }}"
+          path: deploy/gitops/apps
+          helm:
+            valueFiles:
+              - "values-{{ mto_environment }}.yaml"
+            parameters:
+              - name: repoURL
+                value: "{{ argocd_repo_url }}"
+              - name: targetRevision
+                value: "{{ argocd_target_revision }}"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: "{{ argocd_namespace }}"
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true

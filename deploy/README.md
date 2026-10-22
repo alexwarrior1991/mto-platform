@@ -30,7 +30,22 @@ deploy/
   `registry.access.redhat.com` (Redis, Python del Job del realm) y `github.com` (el Job del realm clona los
   repositorios).
 - En la maquina que ejecuta Ansible: Python 3.11+, `pip install -r ansible/requirements.txt` y
-  `ansible-galaxy collection install -r ansible/requirements.yml -p ansible/collections`.
+  `ansible-galaxy collection install -r ansible/requirements.yml -p ansible/collections`. `redhat.openshift`
+  4 viene de Automation Hub, que pide el token de console.redhat.com; Galaxy no la tiene como estable. Con el
+  token en el entorno basta con declarar el servidor en `ansible.cfg` (o en `~/.ansible.cfg`):
+
+  ```ini
+  [galaxy]
+  server_list = automation_hub, galaxy
+
+  [galaxy_server.automation_hub]
+  url = https://console.redhat.com/api/automation-hub/content/published/
+  auth_url = https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+  # el token, en ANSIBLE_GALAXY_SERVER_AUTOMATION_HUB_TOKEN
+
+  [galaxy_server.galaxy]
+  url = https://galaxy.ansible.com/
+  ```
 
 ## Paso a paso
 
@@ -184,7 +199,7 @@ kubeconform -strict -summary \
   -schema-location 'deploy/gitops/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   /tmp/render/staging/*.yaml
-(cd deploy/ansible && ansible-playbook -i inventories/staging site.yml --syntax-check && ansible-lint site.yml roles)
+(cd deploy/ansible && ansible-playbook -i inventories/staging site.yml --syntax-check && ansible-lint --offline site.yml roles)
 ```
 
 Es lo que hace el job `deploy` del CI, con los dos entornos. El job `realm` prueba el camino del realm contra

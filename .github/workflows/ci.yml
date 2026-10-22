@@ -303,18 +303,24 @@ jobs:
         with:
           python-version: '3.12'
 
+      # redhat.openshift es la coleccion certificada de Red Hat y su version 4 esta en Automation Hub, que pide
+      # un token; Galaxy no la tiene como estable. Es community.okd con otro nombre (el mismo openshift_auth), asi
+      # que el playbook se comprueba con community.okd de Galaxy instalada como redhat.openshift.
       - name: Install Ansible
         working-directory: deploy/ansible
         run: |
           pip install -r requirements.txt ansible-lint
-          ansible-galaxy collection install -r requirements.yml -p collections
+          ansible-galaxy collection install kubernetes.core community.okd -p collections
+          mkdir -p collections/ansible_collections/redhat
+          ln -s ../community/okd collections/ansible_collections/redhat/openshift
 
+      # --offline: sin el, ansible-lint vuelve a instalar requirements.yml, y redhat.openshift no esta en Galaxy.
       - name: Check the playbook
         working-directory: deploy/ansible
         run: |
           ansible-playbook -i inventories/staging site.yml --syntax-check
           ansible-playbook -i inventories/prod site.yml --syntax-check
-          ansible-lint site.yml roles
+          ansible-lint --offline site.yml roles
 
   # Las pruebas de punta a punta de mto-frontend (e2e/) contra la plataforma entera, con los dos
   # frontales: lo que se ve en una pantalla de verdad, el SSO compartido y el enlace entre las dos

@@ -1,0 +1,15 @@
+# Un token de la API con el usuario y la contrasena del vault (OAuth de OpenShift). Los demas modulos lo usan
+# por module_defaults (site.yml); logout.yml lo revoca al terminar.
+- name: Pedir un token de la API del cluster
+  redhat.openshift.openshift_auth:
+    host: "{{ openshift_api_url }}"
+    username: "{{ vault_openshift_username }}"
+    password: "{{ vault_openshift_password }}"
+    validate_certs: "{{ openshift_validate_certs }}"
+  register: openshift_auth_results
+  no_log: true
+
+- name: Guardar el token para los demas roles
+  ansible.builtin.set_fact:
+    openshift_auth_api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+  no_log: true

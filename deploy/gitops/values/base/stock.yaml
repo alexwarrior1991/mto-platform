@@ -1,0 +1,26 @@
+name: mto-stock
+image:
+  repository: ghcr.io/alexwarrior1991/mto-stock
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  DATABASE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_stock
+  SPRING_DATA_REDIS_HOST: mto-redis
+  SPRING_DATA_REDIS_PORT: "6379"
+  APP_CACHE_ENABLED: "true"
+  MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
+  APP_RABBITMQ_ENABLED: "true"
+  APP_RABBITMQ_MASTER_DATA_LISTENER_ENABLED: "true"
+  KEYCLOAK_CLIENT_ID: mto-stock-api
+  KEYCLOAK_AUDIENCE: mto-stock-api
+
+secretEnv:
+  DATABASE_USERNAME:
+    secret: mto-db-stock
+    key: username
+  DATABASE_PASSWORD:
+    secret: mto-db-stock
+    key: password
+  SPRING_DATA_REDIS_PASSWORD:
+    secret: mto-redis
+    key: password

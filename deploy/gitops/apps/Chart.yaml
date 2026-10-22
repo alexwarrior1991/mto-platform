@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mto-apps
+description: App of Apps de un entorno MTO, la Application raiz que crea deploy/ansible. Una Application de Argo CD por pieza (infraestructura, realm, cada servicio y los dos frontales), en el orden en que tienen que llegar.
+type: application
+version: 0.1.0

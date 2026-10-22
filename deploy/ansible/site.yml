@@ -1,0 +1,59 @@
+# Prepara un entorno MTO en OpenShift y lo entrega a Argo CD: los operadores, el proyecto con sus cuotas, los
+# secretos del vault y la Application raiz (deploy/gitops/apps). Lo demas lo despliega Argo CD desde Git.
+#
+#   ansible-playbook -i inventories/staging site.yml --ask-vault-pass
+#   ansible-playbook -i inventories/prod site.yml --ask-vault-pass --tags secrets
+- name: Preparar el entorno MTO en OpenShift
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ openshift_api_url }}"
+      api_key: "{{ openshift_auth_api_key }}"
+      validate_certs: "{{ openshift_validate_certs }}"
+  tasks:
+    - name: Entrar en el cluster
+      ansible.builtin.include_role:
+        name: openshift_auth
+        apply:
+          tags: [always]
+      tags: [always]
+
+    - name: Preparar el entorno y salir del cluster pase lo que pase
+      block:
+        - name: Instalar los operadores del cluster
+          ansible.builtin.include_role:
+            name: operators
+            apply:
+              tags: [operators]
+          tags: [operators]
+
+        - name: Crear el proyecto del entorno
+          ansible.builtin.include_role:
+            name: projects
+            apply:
+              tags: [projects]
+          tags: [projects]
+
+        - name: Crear los secretos del entorno
+          ansible.builtin.include_role:
+            name: secrets
+            apply:
+              tags: [secrets]
+          tags: [secrets]
+
+        - name: Entregar el entorno a Argo CD
+          ansible.builtin.include_role:
+            name: argocd
+            apply:
+              tags: [argocd]
+          tags: [argocd]
+      always:
+        - name: Salir del cluster
+          ansible.builtin.include_role:
+            name: openshift_auth
+            tasks_from: logout
+            apply:
+              tags: [always]
+          tags: [always]

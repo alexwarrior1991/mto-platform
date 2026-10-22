@@ -1,0 +1,3 @@
+# El vault de cada entorno se cifra con ansible-vault y no se sube: aqui solo vault.example.yml.
+inventories/*/group_vars/all/vault.yml
+collections/

@@ -1,0 +1,28 @@
+# enableUserWorkload en cluster-monitoring-config, conservando el resto de su config.yaml: el ConfigMap es de
+# todo el cluster y puede traer ya la retencion, el almacenamiento o los nodos de Prometheus.
+- name: Leer la configuracion de la monitorizacion del cluster
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: cluster-monitoring-config
+    namespace: openshift-monitoring
+  register: projects_monitoring_config
+
+- name: Calcular la configuracion con enableUserWorkload
+  ansible.builtin.set_fact:
+    projects_monitoring_yaml: >-
+      {{ (projects_monitoring_config.resources[0].data['config.yaml'] | default('{}') | from_yaml
+          if projects_monitoring_config.resources | length > 0 else {})
+         | default({}, true) | combine({'enableUserWorkload': true}) }}
+
+- name: Guardar la configuracion de la monitorizacion del cluster
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: "{{ projects_monitoring_yaml | to_nice_yaml(indent=2) }}"

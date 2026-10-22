@@ -1,0 +1,32 @@
+name: mto-backoffice
+image:
+  repository: ghcr.io/alexwarrior1991/mto-backoffice
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  KEYCLOAK_CLIENT_ID: mto-backoffice
+  MTO_GATEWAY_URL: http://mto-gateway:8080
+  MTO_FRONTEND_URL: "{{ .Values.global.frontendUrl }}"
+  # Detras del router: el redirect URI del login se construye con {baseUrl}, y sin esto saldria en http.
+  SERVER_FORWARDHEADERSSTRATEGY: native
+
+secretEnv:
+  KEYCLOAK_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_BACKOFFICE
+
+# La sesion de Vaadin vive en memoria de un pod (mto-backoffice no la comparte a proposito): la Route
+# vuelve siempre al mismo con su cookie, TLS edge (passthrough no deja ver la cookie), un timeout largo
+# para @Push, y el PDB del chart.
+route:
+  enabled: true
+  host: '{{ trimPrefix "https://" .Values.global.backofficeUrl }}'
+  cookieName: mto-backoffice
+  annotations:
+    haproxy.router.openshift.io/timeout: 1h
+  tls:
+    termination: edge
+
+# No expone /actuator/prometheus.
+serviceMonitor:
+  enabled: false

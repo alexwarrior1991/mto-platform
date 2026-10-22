@@ -1,0 +1,45 @@
+name: mto-configuration
+image:
+  repository: ghcr.io/alexwarrior1991/mto-configuration
+
+env:
+  # Sin perfil: application.yaml es la configuracion de un entorno desplegado (el perfil docker trae
+  # secretos de desarrollo por defecto, y no hay perfil prod).
+  SPRING_PROFILES_ACTIVE: default
+  MTO_CONFIGURATION_DATASOURCE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_configuration_db
+  MTO_CONFIGURATION_DB_SCHEMA: mto_configuration
+  SPRING_DATA_REDIS_HOST: mto-redis
+  SPRING_DATA_REDIS_PORT: "6379"
+  KEYCLOAK_CLIENT_ID: mto-configuration-api
+  KEYCLOAK_AUDIENCE: mto-configuration-api
+  KEYCLOAK_TOKEN_URI: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-configuration-svc
+  # Los ficheros de los trabajos, en el PVC compartido por las replicas (README_ASYNC_JOBS.md §10): sin el,
+  # la replica que no genero un fichero responde 410.
+  APP_JOBS_PROFILE_EXPORT_DIRECTORY: /data/exports
+  APP_JOBS_PROFILE_IMPORT_REPORT_DIRECTORY: /data/profile-imports
+  APP_JOBS_LOV_REPORT_DIRECTORY: /data/lov-imports
+
+secretEnv:
+  MTO_CONFIGURATION_DATASOURCE_USERNAME:
+    secret: mto-db-configuration
+    key: username
+  MTO_CONFIGURATION_DATASOURCE_PASSWORD:
+    secret: mto-db-configuration
+    key: password
+  SPRING_DATA_REDIS_PASSWORD:
+    secret: mto-redis
+    key: password
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_CONFIGURATION_SVC
+  # mto-configuration lee la firma de otra variable que los demas.
+  MTO_MESSAGING_SIGNATURE_SECRET:
+    secret: mto-messaging
+    key: signature-secret
+
+persistence:
+  enabled: true
+  mountPath: /data
+  accessMode: ReadWriteMany
+  size: 5Gi

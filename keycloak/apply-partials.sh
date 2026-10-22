@@ -64,6 +64,9 @@ FICHEROS=(
   # Los perfiles de puesto (operario, jefe de equipo, supervisor...): cruzan seis servicios, asi que
   # van detras de todas sus parciales. Los usuarios de puesto de mto-resources-dev.json los nombran.
   "$AQUI/mto-positions-cross-service.json"
+  # La cuenta de servicio con la que los ServiceMonitor de OpenShift raspan /actuator/prometheus:
+  # audiencia hacia los ocho API, que ya existen; sus roles (solo ops-metrics) se conceden abajo.
+  "$AQUI/mto-metrics-cross-service.json"
 )
 
 # Los ficheros de desarrollo (usuarios con contrasena 'local' y los secretos fijos de los clientes
@@ -333,6 +336,14 @@ conceder_roles_de_servicio mto-resources-svc realm-management view-users query-u
 # La pasarela de los dispositivos GPS manda sus posiciones a mto-resources con su propia cuenta de servicio:
 # solo resources-telematics-write, que no abre nada mas.
 conceder_roles_de_servicio mto-telematics-svc mto-resources-api resources-telematics-write
+
+# Las metricas de cada servicio (/actuator/prometheus) piden ops-metrics de SU API. La cuenta con la que
+# las raspa Prometheus lleva ese rol en los ocho y nada mas: ni ops-write ni un permiso de negocio, que
+# es la diferencia con el perfil mto-ops de una persona.
+for api in mto-configuration-api mto-stock-api mto-gateway-api mto-maintenance-api mto-users-api \
+           mto-notification-api mto-field-api mto-resources-api; do
+  conceder_roles_de_servicio mto-metrics-svc "$api" ops-metrics
+done
 
 # Los eventos del realm no los trae ninguna parcial: son ajustes del realm, no de un cliente, y
 # viven en mto-realm.json (el local los lleva iguales; scripts/check_realm_consistency.py lo

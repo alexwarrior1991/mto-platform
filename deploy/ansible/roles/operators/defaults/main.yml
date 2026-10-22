@@ -1,0 +1,43 @@
+# Los operadores de todo el cluster, por OLM. Los de redhat-operators son de Red Hat; CloudNativePG y el de
+# RabbitMQ, de community-operators. Cada uno: su namespace (openshift-operators ya tiene el OperatorGroup
+# global), si su OperatorGroup se limita a su namespace, su paquete, su canal y su catalogo.
+operators_cluster:
+  - name: openshift-gitops-operator
+    namespace: openshift-gitops-operator
+    own_namespace: false
+    channel: latest
+    source: redhat-operators
+    enabled: true
+  - name: cloudnative-pg
+    namespace: openshift-operators
+    channel: stable-v1
+    source: community-operators
+    enabled: true
+  - name: rabbitmq-cluster-operator
+    namespace: openshift-operators
+    channel: stable
+    source: community-operators
+    enabled: true
+  - name: openshift-cert-manager-operator
+    namespace: cert-manager-operator
+    own_namespace: true
+    channel: stable-v1
+    source: redhat-operators
+    enabled: true
+  - name: odf-operator
+    namespace: openshift-storage
+    own_namespace: true
+    channel: "{{ operators_odf_channel }}"
+    source: redhat-operators
+    enabled: "{{ operators_odf_enabled }}"
+    namespace_labels:
+      openshift.io/cluster-monitoring: "true"
+
+operators_odf_enabled: true
+operators_odf_channel: stable-4.18
+
+# Automatic: OLM actualiza dentro del canal. Manual deja cada InstallPlan pendiente de aprobar.
+operators_install_plan_approval: Automatic
+
+# Cuanto se espera a que un operador quede instalado (intentos de 10 s).
+operators_wait_retries: 60

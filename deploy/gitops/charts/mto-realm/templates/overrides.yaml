@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mto-realm-overrides
+  labels:
+    {{- include "mto-realm.labels" . | nindent 4 }}
+  annotations:
+    # Antes que el Job que aplica (onda 0), que lo monta; el que comprueba llega despues de todo.
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  overrides.json: |
+    {{- tpl (toPrettyJson .Values.overrides) . | nindent 4 }}

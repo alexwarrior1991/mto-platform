@@ -1,0 +1,58 @@
+{{- $environment := required "environment es obligatorio (staging o prod)" .Values.environment -}}
+{{- $namespace := required "namespace es obligatorio" .Values.namespace -}}
+{{- range .Values.applications }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mto-{{ $environment }}-{{ .name }}
+  namespace: {{ $.Values.argocdNamespace }}
+  labels:
+    app.kubernetes.io/part-of: mto
+    mto.alejandro.com/environment: {{ $environment }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+  # Borrar la Application borra lo que desplego (salvo lo marcado Delete=false: bases, colas y PVC).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.targetRevision }}
+    path: deploy/gitops/charts/{{ .chart }}
+    helm:
+      releaseName: mto-{{ .name }}
+      ignoreMissingValueFiles: true
+      valueFiles:
+        {{- range .valueFiles }}
+        - ../../values/base/{{ . }}
+        {{- end }}
+        - ../../values/{{ $environment }}/common.yaml
+        {{- range .valueFiles }}
+        - ../../values/{{ $environment }}/{{ . }}
+        {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+  {{- if eq .chart "mto-service" }}
+  # El HPA es quien decide las replicas: Argo CD no las devuelve a las del Deployment.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+  {{- end }}
+{{- end }}

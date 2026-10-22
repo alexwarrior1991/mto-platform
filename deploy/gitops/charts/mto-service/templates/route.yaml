@@ -1,0 +1,36 @@
+{{- if .Values.route.enabled }}
+{{- if and .Values.route.cookieName (eq .Values.route.tls.termination "passthrough") }}
+{{- fail "route.cookieName exige que el router vea el HTTP: con TLS passthrough no hay cookie de afinidad (usese edge o reencrypt)" }}
+{{- end }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "mto-service.name" . }}
+  labels:
+    {{- include "mto-service.labels" . | nindent 4 }}
+  {{- if or .Values.route.annotations .Values.route.cookieName }}
+  annotations:
+    {{- with .Values.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.route.cookieName }}
+    router.openshift.io/cookie_name: {{ . }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ tpl . $ }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "mto-service.name" . }}
+  port:
+    targetPort: {{ .Values.route.targetPort }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    {{- if ne .Values.route.tls.termination "passthrough" }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+    {{- else }}
+    insecureEdgeTerminationPolicy: None
+    {{- end }}
+{{- end }}

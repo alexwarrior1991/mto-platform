@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Route de OpenShift (route.openshift.io/v1), lo que usan los charts de deploy/gitops. El catalogo de kubeconform no la trae: este esquema sigue la API de OpenShift 4 para los campos de spec y rechaza los demas.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "route.openshift.io/v1"},
+    "kind": {"const": "Route"},
+    "metadata": {"type": "object"},
+    "status": {"type": "object"},
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to"],
+      "properties": {
+        "host": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", "maxLength": 253},
+        "subdomain": {"type": "string"},
+        "path": {"type": "string"},
+        "wildcardPolicy": {"enum": ["None", "Subdomain"]},
+        "to": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": {"const": "Service"},
+            "name": {"type": "string", "minLength": 1},
+            "weight": {"type": "integer", "minimum": 0, "maximum": 256}
+          }
+        },
+        "alternateBackends": {"type": "array"},
+        "port": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["targetPort"],
+          "properties": {"targetPort": {"type": ["string", "integer"]}}
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["termination"],
+          "properties": {
+            "termination": {"enum": ["edge", "passthrough", "reencrypt"]},
+            "insecureEdgeTerminationPolicy": {"enum": ["Allow", "None", "Redirect", ""]},
+            "certificate": {"type": "string"},
+            "key": {"type": "string"},
+            "caCertificate": {"type": "string"},
+            "destinationCACertificate": {"type": "string"},
+            "externalCertificate": {"type": "object"}
+          }
+        },
+        "httpHeaders": {"type": "object"}
+      }
+    }
+  }
+}

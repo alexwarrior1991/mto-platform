@@ -1,0 +1,96 @@
+# Aplica el realm: en cada sincronizacion de Argo CD (un hook Sync, que se vuelve a crear cada vez), con
+# las parciales de la revision de git.revision. keycloak-config-cli con IMPORT_MANAGED_*=no-delete, como el
+# partialImport con OVERWRITE de apply-partials.sh: crea y actualiza, nunca borra lo que no esta.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mto-realm-import
+  labels:
+    {{- include "mto-realm.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "mto-realm.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- include "mto-realm.podSecurity" . | nindent 6 }}
+      initContainers:
+        {{- include "mto-realm.clone" . | nindent 8 }}
+        - name: build
+          image: {{ .Values.images.python }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Los secretos de los clientes, como variables: el script solo los copia al realm montado, que
+          # vive en un emptyDir del pod y desaparece con el.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.clientSecrets }}
+          command:
+            - python3
+            - /work/repos/mto-platform/deploy/keycloak/build_realm_import.py
+            - --repos
+            - /work/repos
+            - --overrides
+            - /config/overrides.json
+            - --output
+            - /work/import/realm-mto.json
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: overrides
+              mountPath: /config
+              readOnly: true
+      containers:
+        - name: keycloak-config-cli
+          image: {{ .Values.images.keycloakConfigCli }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: KEYCLOAK_URL
+              value: {{ .Values.keycloak.url | quote }}
+            - name: KEYCLOAK_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.adminSecret }}
+                  key: username
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.adminSecret }}
+                  key: password
+            # Espera a que Keycloak responda: en la primera sincronizacion el Job llega antes que el.
+            - name: KEYCLOAK_AVAILABILITYCHECK_ENABLED
+              value: "true"
+            - name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT
+              value: 300s
+            - name: IMPORT_FILES_LOCATIONS
+              value: file:/work/import/realm-mto.json
+            {{- range list "CLIENT" "ROLE" "GROUP" "CLIENT_SCOPE" "COMPONENT" "SUB_COMPONENT" "REQUIRED_ACTION" "AUTHENTICATION_FLOW" "IDENTITY_PROVIDER" "IDENTITY_PROVIDER_MAPPER" "CLIENT_SCOPE_MAPPING" "SCOPE_MAPPING" }}
+            - name: IMPORT_MANAGED_{{ . }}
+              value: no-delete
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: overrides
+          configMap:
+            name: mto-realm-overrides

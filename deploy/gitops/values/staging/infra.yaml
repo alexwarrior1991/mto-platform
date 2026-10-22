@@ -1,0 +1,11 @@
+# staging: lo justo para tener varias replicas de los servicios y probar el paso de un nodo a otro.
+postgres:
+  instances: 2
+  storage:
+    size: 10Gi
+rabbitmq:
+  replicas: 3
+  storage:
+    size: 5Gi
+keycloak:
+  instances: 1

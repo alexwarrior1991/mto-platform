@@ -1,0 +1,47 @@
+# Lo que comparte un entorno; lo pone values/<entorno>/common.yaml.
+global: {}
+
+# De donde salen las parciales: los repositorios hermanos, en la misma revision para todos. El Job los
+# clona, monta el realm con deploy/keycloak/build_realm_import.py y lo aplica. Se vuelve a aplicar cuando
+# cambia algo de este chart (esta revision, los overrides) o con un Sync a mano: una parcial nueva en otro
+# repositorio no cambia lo renderizado.
+git:
+  baseUrl: https://github.com/alexwarrior1991
+  revision: master
+  repositories:
+    - mto-platform
+    - mto-notification
+    - mto-configuration
+    - mto-stock
+    - mto-gateway
+    - mto-resources
+    - mto-maintenance
+    - mto-users
+    - mto-field
+    - mto-backoffice
+  # Secret opcional con la clave "token" para repositorios privados (lo crea Ansible).
+  tokenSecret: ""
+
+# Keycloak al que se aplica: su Service, sin pasar por el router. El 'iss' no cambia (hostname fijo).
+keycloak:
+  url: http://mto-keycloak-service:8080
+  # Secret con username/password del administrador de arranque (el mismo del CR de Keycloak).
+  adminSecret: mto-keycloak-admin
+
+# Los secretos de los clientes confidenciales (KC_CLIENT_SECRET_<CLIENTID>) y el del SMTP (KC_SMTP_PASSWORD).
+clientSecrets: mto-keycloak-client-secrets
+
+# Lo que el entorno cambia del realm (deploy/keycloak/overrides.example.json): las URLs de los clientes de
+# login y, si hace falta, el SMTP. Pasa por tpl: puede nombrar .Values.global.
+overrides: {}
+
+images:
+  python: registry.access.redhat.com/ubi9/python-312:latest
+  keycloakConfigCli: docker.io/adorsys/keycloak-config-cli:6.4.0-26
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 768Mi

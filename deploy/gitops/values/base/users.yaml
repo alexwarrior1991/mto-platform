@@ -1,0 +1,18 @@
+name: mto-users
+image:
+  repository: ghcr.io/alexwarrior1991/mto-users
+
+# Sin base de datos: todo lo que administra vive en Keycloak.
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  KEYCLOAK_USERS_CLIENT_ID: mto-users-api
+  KEYCLOAK_AUDIENCE: mto-users-api
+  KEYCLOAK_AUTH_SERVER_URL: "{{ .Values.global.keycloakUrl }}"
+  KEYCLOAK_REALM: mto
+  KEYCLOAK_ADMIN_CLIENT_ID: mto-users-svc
+  APP_RABBITMQ_ENABLED: "true"
+
+secretEnv:
+  KEYCLOAK_ADMIN_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_USERS_SVC

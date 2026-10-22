@@ -1,0 +1,29 @@
+name: mto-resources
+image:
+  repository: ghcr.io/alexwarrior1991/mto-resources
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  DATABASE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_resources
+  APP_RABBITMQ_ENABLED: "true"
+  APP_RABBITMQ_MAINTENANCE_LISTENER_ENABLED: "true"
+  APP_RABBITMQ_FIELD_LISTENER_ENABLED: "true"
+  APP_RABBITMQ_MASTER_DATA_LISTENER_ENABLED: "true"
+  KEYCLOAK_CLIENT_ID: mto-resources-api
+  KEYCLOAK_AUDIENCE: mto-resources-api
+  # La Admin API, solo lectura, para el informe de puestos y perfiles.
+  KEYCLOAK_AUTH_SERVER_URL: "{{ .Values.global.keycloakUrl }}"
+  KEYCLOAK_REALM: mto
+  KEYCLOAK_TOKEN_URI: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-resources-svc
+
+secretEnv:
+  DATABASE_USERNAME:
+    secret: mto-db-resources
+    key: username
+  DATABASE_PASSWORD:
+    secret: mto-db-resources
+    key: password
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_RESOURCES_SVC

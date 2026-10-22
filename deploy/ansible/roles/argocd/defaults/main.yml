@@ -1,0 +1,4 @@
+argocd_namespace: openshift-gitops
+argocd_instance: openshift-gitops
+argocd_repo_url: https://github.com/alexwarrior1991/mto-platform.git
+argocd_target_revision: master

@@ -1,0 +1,37 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: {{ .Values.rabbitmq.name }}
+  labels:
+    {{- include "mto-infra.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Delete=false
+spec:
+  replicas: {{ .Values.rabbitmq.replicas }}
+  {{- with .Values.rabbitmq.image }}
+  image: {{ . }}
+  {{- end }}
+  persistence:
+    storage: {{ .Values.rabbitmq.storage.size }}
+    {{- with .Values.rabbitmq.storage.storageClass }}
+    storageClassName: {{ . }}
+    {{- end }}
+  resources:
+    {{- toYaml .Values.rabbitmq.resources | nindent 4 }}
+  rabbitmq:
+    # Las colas de los consumidores son quorum aqui (APP_RABBITMQ_QUEUES_TYPE=quorum): con varios nodos
+    # sobreviven a la caida de uno. Las exclusivas de las replicas de mto-field siguen siendo clasicas.
+    additionalConfig: |
+      cluster_partition_handling = pause_minority
+  # En OpenShift el UID lo pone la SCC restricted-v2: sin el securityContext fijo del operador.
+  override:
+    statefulSet:
+      spec:
+        template:
+          spec:
+            securityContext: {}
+            containers: []
+            initContainers:
+              - name: setup-container
+                securityContext: {}

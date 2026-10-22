@@ -9,17 +9,26 @@ servicio, y ninguna comprobacion estatica lo veria.
 
 Se ejecuta despues de keycloak/apply-partials.sh, contra el Keycloak del compose, y comprueba:
 
-- que cada cliente declarado en una parcial esta en el realm con lo que la parcial dice de el:
-  flags, URIs, atributos y protocol mappers;
+- que cada cliente declarado en el realm de partida o en una parcial esta en el realm con lo que el
+  fichero dice de el: flags, URIs, atributos y protocol mappers;
 - que cada secreto de un fichero de desarrollo es el que tiene el cliente;
 - que las cuentas de servicio tienen los roles que apply-partials.sh les concede;
 - que los eventos del realm quedan como los declara mto-realm.json (events/config y la caducidad de
   los de administracion), y el SMTP como el realm local: es lo que mto-notification lee.
 
+En un entorno desplegado (OpenShift, deploy/), el realm se monta sin los ficheros de desarrollo y con
+las URLs publicas de ese entorno. Para eso:
+
+- --no-dev-users: el realm de partida es mto-realm.json (no el local), y no se comprueban ni los
+  secretos de desarrollo ni el SMTP de Mailpit;
+- --overrides FICHERO: lo que el entorno cambia de un cliente (rootUrl, redirectUris, webOrigins,
+  atributos...), con la forma {"clients": {"<clientId>": {campo: valor}}}. Es el mismo fichero que lee
+  deploy/keycloak/build_realm_import.py al montar el realm, asi que se comprueba lo que se aplico.
+
 Solo libreria estandar, como check_realm_consistency.py.
 
 Uso:
-    python3 scripts/check_applied_realm.py [--repos DIR]
+    python3 scripts/check_applied_realm.py [--repos DIR] [--no-dev-users] [--overrides FICHERO]
 
 KC_URL y KC_REALM, y las credenciales KC_BOOTSTRAP_ADMIN_USERNAME / KC_BOOTSTRAP_ADMIN_PASSWORD,
 se leen del entorno con los mismos valores por defecto que apply-partials.sh.
@@ -34,7 +43,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from check_realm_consistency import Problemas, clientes_de, leer
+from check_realm_consistency import CLIENTES_API, Problemas, clientes_de, leer
 
 # Los campos de un cliente que se comparan tal cual cuando la parcial los declara.
 CAMPOS_SIMPLES = (
@@ -53,22 +62,27 @@ CAMPOS_SIMPLES = (
 # Las listas, que se comparan como conjuntos: Keycloak no garantiza el orden.
 CAMPOS_LISTA = ("redirectUris", "webOrigins")
 
-# Los roles que apply-partials.sh concede a cada cuenta de servicio: {cliente: (cliente del API, roles)}.
-# El mismo reparto que las llamadas a conceder_roles_de_servicio. Si cambia alli, cambia aqui.
-ROLES_DE_SERVICIO = {
-    "mto-maintenance-svc": ("mto-stock-api", {"stock-read", "stock-write"}),
-    "mto-field-svc": ("mto-maintenance-api", {"maintenance-read", "maintenance-write"}),
-    "mto-users-svc": (
+# Los roles que apply-partials.sh concede a cada cuenta de servicio: (cliente, cliente del API, roles).
+# El mismo reparto que las llamadas a conceder_roles_de_servicio. Si cambia alli, cambia aqui. Tambien
+# lo lee deploy/keycloak/build_realm_import.py, que los concede en un entorno desplegado.
+ROLES_DE_SERVICIO = [
+    ("mto-maintenance-svc", "mto-stock-api", {"stock-read", "stock-write"}),
+    ("mto-field-svc", "mto-maintenance-api", {"maintenance-read", "maintenance-write"}),
+    (
+        "mto-users-svc",
         "realm-management",
         {"view-users", "query-users", "manage-users", "view-clients", "query-clients", "view-realm"},
     ),
-    "mto-notification-svc": (
+    (
+        "mto-notification-svc",
         "realm-management",
         {"view-events", "view-users", "query-users", "view-clients", "query-clients", "view-realm"},
     ),
-    "mto-resources-svc": ("realm-management", {"view-users", "query-users", "view-realm"}),
-    "mto-telematics-svc": ("mto-resources-api", {"resources-telematics-write"}),
-}
+    ("mto-resources-svc", "realm-management", {"view-users", "query-users", "view-realm"}),
+    ("mto-telematics-svc", "mto-resources-api", {"resources-telematics-write"}),
+    # Prometheus raspa /actuator/prometheus de cada servicio con esta cuenta: solo ops-metrics, en los ocho.
+    *[("mto-metrics-svc", api, {"ops-metrics"}) for api in CLIENTES_API],
+]
 
 # Lo que apply-partials.sh manda a events/config, tal cual lo declara mto-realm.json.
 CAMPOS_DE_EVENTOS = (
@@ -96,6 +110,7 @@ def ficheros(raiz):
         raiz / "mto-backoffice" / "keycloak" / "mto-backoffice-partial-import.json",
         plataforma / "mto-ops-cross-service.json",
         plataforma / "mto-positions-cross-service.json",
+        plataforma / "mto-metrics-cross-service.json",
     ]
     desarrollo = [
         raiz / "mto-notification" / "keycloak" / "mto-notification-dev.json",
@@ -169,11 +184,28 @@ def diferencias(declarado, real):
     return lineas
 
 
-def los_clientes_conservan_lo_que_declaran(keycloak, parciales, problemas):
+def con_overrides(cliente, overrides):
+    """El cliente tal como queda en el entorno: lo que cambia el entorno sobre lo que dice su fichero.
+
+    Los atributos se mezclan clave a clave (el entorno cambia uno, no todos); cualquier otro campo se
+    sustituye entero. Sin nada para ese cliente, el cliente tal cual.
+    """
+    cambios = (overrides.get("clients") or {}).get(cliente.get("clientId")) or {}
+    if not cambios:
+        return cliente
+    resultado = {**cliente, **{k: v for k, v in cambios.items() if k != "attributes"}}
+    if "attributes" in cambios:
+        resultado["attributes"] = {**(cliente.get("attributes") or {}), **cambios["attributes"]}
+    return resultado
+
+
+def los_clientes_conservan_lo_que_declaran(keycloak, realm_de_partida, parciales, overrides, problemas):
     declarados = {}
+    for client_id, cliente in clientes_de(realm_de_partida[1]).items():
+        declarados[client_id] = (realm_de_partida[0], con_overrides(cliente, overrides))
     for ruta in parciales:
         for client_id, cliente in clientes_de(leer(ruta)).items():
-            declarados.setdefault(client_id, (ruta.name, cliente))
+            declarados.setdefault(client_id, (ruta.name, con_overrides(cliente, overrides)))
     for client_id, (fichero, declarado) in declarados.items():
         real = keycloak.cliente(client_id)
         if real is None:
@@ -209,7 +241,7 @@ def los_secretos_son_los_de_desarrollo(keycloak, desarrollo, problemas):
 
 
 def las_cuentas_de_servicio_tienen_sus_roles(keycloak, problemas):
-    for client_id, (cliente_api, esperados) in ROLES_DE_SERVICIO.items():
+    for client_id, cliente_api, esperados in ROLES_DE_SERVICIO:
         cliente = keycloak.cliente(client_id)
         api = keycloak.cliente(cliente_api)
         if cliente is None or api is None:
@@ -255,7 +287,7 @@ def los_eventos_del_realm_quedan_como_los_declara_el_base(keycloak, base, local,
                 f"  attributes.{clave}: el fichero dice {valor!r} y el realm tiene {atributos.get(clave)!r}.",
             )
 
-    smtp = local.get("smtpServer")
+    smtp = local.get("smtpServer") if local else None
     if smtp:
         real_smtp = realm.get("smtpServer") or {}
         # Keycloak enmascara la contrasena al leer; el realm local no declara ninguna.
@@ -276,13 +308,27 @@ def main():
         default=Path(__file__).resolve().parent.parent.parent,
         help="Directorio que contiene los diez repositorios como hermanos.",
     )
+    parser.add_argument(
+        "--no-dev-users",
+        action="store_true",
+        help="Realm desplegado: de partida mto-realm.json, sin ficheros de desarrollo ni SMTP de Mailpit.",
+    )
+    parser.add_argument(
+        "--overrides",
+        type=Path,
+        help="JSON con lo que el entorno cambia de cada cliente: {\"clients\": {\"<clientId>\": {...}}}.",
+    )
     args = parser.parse_args()
 
     raiz = args.repos.resolve()
     plataforma = raiz / "mto-platform" / "keycloak"
     base = leer(plataforma / "mto-realm.json")
-    local = leer(plataforma / "mto-realm-local.json")
+    local = None if args.no_dev_users else leer(plataforma / "mto-realm-local.json")
+    realm_de_partida = ("mto-realm.json", base) if args.no_dev_users else ("mto-realm-local.json", local)
+    overrides = leer(args.overrides) if args.overrides else {}
     parciales, desarrollo = ficheros(raiz)
+    if args.no_dev_users:
+        desarrollo = []
     keycloak = Keycloak(
         os.environ.get("KC_URL", "http://localhost:8082"),
         os.environ.get("KC_REALM", "mto"),
@@ -291,7 +337,7 @@ def main():
     )
 
     problemas = Problemas()
-    clientes = los_clientes_conservan_lo_que_declaran(keycloak, parciales, problemas)
+    clientes = los_clientes_conservan_lo_que_declaran(keycloak, realm_de_partida, parciales, overrides, problemas)
     secretos = los_secretos_son_los_de_desarrollo(keycloak, desarrollo, problemas)
     las_cuentas_de_servicio_tienen_sus_roles(keycloak, problemas)
     los_eventos_del_realm_quedan_como_los_declara_el_base(keycloak, base, local, problemas)

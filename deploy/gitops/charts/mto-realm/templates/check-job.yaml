@@ -1,0 +1,60 @@
+# Despues de aplicar, lo mismo que el job realm del CI: el realm aplicado tiene lo que declaran el base y
+# las parciales (roles, clientes con sus mappers, perfiles, cuentas de servicio con sus roles), sin
+# usuarios de desarrollo y con las URLs del entorno. Si falla, la sincronizacion de Argo CD falla.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mto-realm-check
+  labels:
+    {{- include "mto-realm.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "mto-realm.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- include "mto-realm.podSecurity" . | nindent 6 }}
+      initContainers:
+        {{- include "mto-realm.clone" . | nindent 8 }}
+      containers:
+        - name: check
+          image: {{ .Values.images.python }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: KC_URL
+              value: {{ .Values.keycloak.url | quote }}
+            - name: KC_REALM
+              value: mto
+            {{- include "mto-realm.adminEnv" . | nindent 12 }}
+          command:
+            - python3
+            - /work/repos/mto-platform/scripts/check_applied_realm.py
+            - --repos
+            - /work/repos
+            - --no-dev-users
+            - --overrides
+            - /config/overrides.json
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: overrides
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: overrides
+          configMap:
+            name: mto-realm-overrides

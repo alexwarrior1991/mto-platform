@@ -163,8 +163,9 @@ jobs:
         run: |
           bash -n keycloak/apply-partials.sh
           bash -n scripts/e2e.sh
+          bash -n deploy/gitops/scripts/render.sh
           sudo apt-get install -y --no-install-recommends shellcheck >/dev/null 2>&1 || true
-          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh scripts/e2e.sh || true
+          command -v shellcheck >/dev/null && shellcheck keycloak/apply-partials.sh scripts/e2e.sh deploy/gitops/scripts/render.sh || true
 
       # Lo de arriba lee los ficheros; lo que Keycloak hace con ellos solo se ve aplicandolos. Una
       # importacion parcial con OVERWRITE sustituye el cliente entero, y los ficheros de desarrollo
@@ -183,10 +184,137 @@ jobs:
         working-directory: mto-platform
         run: python3 scripts/check_applied_realm.py --repos ..
 
+      # El camino de un entorno desplegado (deploy/, el chart mto-realm): otro Keycloak, limpio, sin los
+      # ficheros de desarrollo; el realm montado por build_realm_import.py con unos secretos y unas URLs de
+      # prueba, aplicado por keycloak-config-cli como lo hace el Job, dos veces (la segunda no cambia nada), y
+      # comprobado con check_applied_realm.py --no-dev-users --overrides, como el Job que va despues.
+      - name: Start a clean Keycloak for the deployed realm
+        run: |
+          docker run -d --name keycloak-deploy -p 18082:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            quay.io/keycloak/keycloak:26.1 start-dev
+          for _ in $(seq 1 90); do
+            curl -sf http://localhost:18082/realms/master >/dev/null && exit 0
+            sleep 2
+          done
+          echo "Keycloak no arranco"; exit 1
+
+      - name: Build the deployed realm
+        working-directory: mto-platform
+        run: |
+          for client in NOTIFICATION_SVC CONFIGURATION_SVC RESOURCES_SVC TELEMATICS_SVC MAINTENANCE_SVC \
+                        USERS_SVC FIELD_SVC BACKOFFICE METRICS_SVC; do
+            export "KC_CLIENT_SECRET_MTO_${client}=ci-${client}-$(openssl rand -hex 8)"
+          done
+          export KC_SMTP_PASSWORD=ci-smtp
+          python3 deploy/keycloak/build_realm_import.py --repos .. \
+            --overrides deploy/keycloak/overrides.example.json --output "$RUNNER_TEMP/realm/realm-mto.json"
+          chmod -R a+rX "$RUNNER_TEMP/realm"
+
+      - name: Apply it with keycloak-config-cli, twice
+        run: |
+          managed=()
+          for kind in CLIENT ROLE GROUP CLIENT_SCOPE COMPONENT SUB_COMPONENT REQUIRED_ACTION AUTHENTICATION_FLOW \
+                      IDENTITY_PROVIDER IDENTITY_PROVIDER_MAPPER CLIENT_SCOPE_MAPPING SCOPE_MAPPING; do
+            managed+=(-e "IMPORT_MANAGED_${kind}=no-delete")
+          done
+          for _ in 1 2; do
+            docker run --rm --network host -v "$RUNNER_TEMP/realm:/work/import:ro" \
+              -e KEYCLOAK_URL=http://localhost:18082 -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin \
+              -e KEYCLOAK_AVAILABILITYCHECK_ENABLED=true -e KEYCLOAK_AVAILABILITYCHECK_TIMEOUT=300s \
+              -e IMPORT_FILES_LOCATIONS=file:/work/import/realm-mto.json "${managed[@]}" \
+              adorsys/keycloak-config-cli:6.4.0-26
+          done
+
+      - name: Check the deployed realm
+        working-directory: mto-platform
+        env:
+          KC_URL: http://localhost:18082
+          KC_BOOTSTRAP_ADMIN_USERNAME: admin
+          KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+        run: |
+          python3 scripts/check_applied_realm.py --repos .. --no-dev-users \
+            --overrides deploy/keycloak/overrides.example.json
+
       - name: Keycloak log
         if: failure()
         working-directory: mto-platform
-        run: docker compose logs --no-color --tail 200 keycloak
+        run: |
+          docker compose logs --no-color --tail 200 keycloak
+          docker logs --tail 200 keycloak-deploy || true
+
+  # deploy/: los charts de Argo CD y el playbook de Ansible. Sin cluster: helm lint y helm template de cada
+  # Application de los dos entornos tal como las renderizaria Argo CD (deploy/gitops/scripts/render.sh),
+  # kubeconform sobre el resultado (los CRD de los operadores, del catalogo de datree; la Route, de
+  # deploy/gitops/schemas), y ansible-lint y --syntax-check del playbook.
+  deploy:
+    name: Despliegue en OpenShift (charts y playbook)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out mto-platform
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP" kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Lint the charts
+        working-directory: deploy/gitops
+        run: |
+          helm lint apps -f apps/values-staging.yaml
+          helm lint apps -f apps/values-prod.yaml
+          helm lint charts/mto-infra -f values/staging/common.yaml -f values/staging/infra.yaml
+          helm lint charts/mto-realm -f values/base/realm.yaml -f values/staging/common.yaml
+          helm lint charts/mto-service -f values/base/spring.yaml -f values/base/rabbitmq.yaml \
+            -f values/base/field.yaml -f values/staging/common.yaml
+
+      - name: Render both environments as Argo CD would
+        run: |
+          deploy/gitops/scripts/render.sh staging "$RUNNER_TEMP/render/staging"
+          deploy/gitops/scripts/render.sh prod "$RUNNER_TEMP/render/prod"
+
+      - name: Validate the manifests
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            -schema-location default \
+            -schema-location 'deploy/gitops/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            "$RUNNER_TEMP"/render/*/*.yaml
+
+      # La regla del backoffice: su cookie de afinidad no existe con TLS passthrough, y el chart lo rechaza.
+      - name: A cookie route cannot be passthrough
+        working-directory: deploy/gitops
+        run: |
+          if helm template x charts/mto-service --set name=mto-x --set image.repository=x \
+               --set route.enabled=true --set route.cookieName=x --set route.tls.termination=passthrough >/dev/null 2>&1; then
+            echo "El chart acepto una Route passthrough con cookie de afinidad"; exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Ansible
+        working-directory: deploy/ansible
+        run: |
+          pip install -r requirements.txt ansible-lint
+          ansible-galaxy collection install -r requirements.yml -p collections
+
+      - name: Check the playbook
+        working-directory: deploy/ansible
+        run: |
+          ansible-playbook -i inventories/staging site.yml --syntax-check
+          ansible-playbook -i inventories/prod site.yml --syntax-check
+          ansible-lint site.yml roles
 
   # Las pruebas de punta a punta de mto-frontend (e2e/) contra la plataforma entera, con los dos
   # frontales: lo que se ve en una pantalla de verdad, el SSO compartido y el enlace entre las dos

@@ -1,0 +1,100 @@
+# Lo que comparte un entorno; lo pone values/<entorno>/common.yaml.
+global: {}
+
+# PostgreSQL de CloudNativePG: un cluster para todo el entorno, una base y un rol por servicio, como el
+# postgres de compose.yaml y su postgres/init/01-databases.sql. La contrasena de cada rol sale del Secret
+# basic-auth que crea Ansible (mto-db-<servicio>), el mismo que lee el servicio.
+postgres:
+  name: mto-postgres
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  storage:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  # Cada replica de un servicio con base abre su pool entero (Hikari, 10): seis servicios con el HPA al
+  # maximo de produccion (4) son 240, mas los dos Keycloak (keycloak.dbPoolMaxSize) y las del operador.
+  # Subir un maxReplicas o un DATABASE_POOL_MAX_SIZE es revisar esta cuenta.
+  parameters:
+    max_connections: "400"
+  # Una base por servicio, con su propietario. Los nombres son los de 01-databases.sql; el esquema
+  # mto_configuration lo crea Flyway (create-schemas: true), como propietario de la base.
+  databases:
+    - name: mto_configuration_db
+      owner: mto_configuration_user
+      secret: mto-db-configuration
+    - name: mto_stock
+      owner: mto_stock_user
+      secret: mto-db-stock
+    - name: mto_maintenance
+      owner: mto_maintenance_user
+      secret: mto-db-maintenance
+    - name: mto_notification
+      owner: mto_notification_user
+      secret: mto-db-notification
+    - name: mto_field
+      owner: mto_field_user
+      secret: mto-db-field
+    - name: mto_resources
+      owner: mto_resources_user
+      secret: mto-db-resources
+    - name: keycloak
+      owner: keycloak
+      secret: mto-db-keycloak
+
+# RabbitMQ del RabbitMQ Cluster Operator. El usuario y la contrasena los genera el operador en el
+# Secret <name>-default-user, que leen los servicios.
+rabbitmq:
+  name: mto-rabbitmq
+  replicas: 3
+  image: ""
+  storage:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+
+# Redis: solo cache de mto-configuration y mto-stock. Una replica y sin persistencia: no guarda nada que
+# no este en PostgreSQL, y sin el los dos servicios siguen respondiendo, consultando la base.
+redis:
+  enabled: true
+  name: mto-redis
+  image: registry.redhat.io/rhel9/redis-7:latest
+  maxmemory: 256mb
+  # Secret con la clave "password" (lo crea Ansible).
+  passwordSecret: mto-redis
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+# Keycloak de RHBK sobre su base de CloudNativePG. Sin el Ingress del operador: una Route edge propia
+# hacia el HTTP del pod, con las cabeceras X-Forwarded del router.
+keycloak:
+  name: mto-keycloak
+  instances: 2
+  image: ""
+  # URL publica (el 'iss' de los tokens). Por defecto, la de global.
+  hostname: "{{ .Values.global.keycloakUrl }}"
+  routeHost: ""
+  # Secret con username/password del administrador de arranque (lo crea Ansible). Lo usa el Job del realm.
+  adminSecret: mto-keycloak-admin
+  # Conexiones de cada instancia a PostgreSQL (Keycloak abre hasta 100 por defecto).
+  dbPoolMaxSize: 20
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi

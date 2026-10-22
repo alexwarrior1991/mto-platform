@@ -1,0 +1,27 @@
+name: mto-maintenance
+image:
+  repository: ghcr.io/alexwarrior1991/mto-maintenance
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  DATABASE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_maintenance
+  APP_RABBITMQ_ENABLED: "true"
+  APP_RABBITMQ_MASTER_DATA_LISTENER_ENABLED: "true"
+  APP_RABBITMQ_RESOURCES_LISTENER_ENABLED: "true"
+  APP_STOCK_ENABLED: "true"
+  MTO_STOCK_URL: http://mto-stock:8080
+  KEYCLOAK_CLIENT_ID: mto-maintenance-api
+  KEYCLOAK_AUDIENCE: mto-maintenance-api
+  KEYCLOAK_TOKEN_URI: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-maintenance-svc
+
+secretEnv:
+  DATABASE_USERNAME:
+    secret: mto-db-maintenance
+    key: username
+  DATABASE_PASSWORD:
+    secret: mto-db-maintenance
+    key: password
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_MAINTENANCE_SVC

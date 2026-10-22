@@ -1,0 +1,67 @@
+# Un operador: su namespace y su OperatorGroup (salvo en openshift-operators, que ya los tiene), su
+# Subscription, y la espera a que su ClusterServiceVersion este Succeeded. Lo usa tambien el role projects
+# para RHBK, que se instala en el proyecto.
+- name: Crear el namespace de {{ operators_item.name }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ operators_item.namespace }}"
+        labels: "{{ operators_item.namespace_labels | default({}) }}"
+  when: operators_item.namespace != 'openshift-operators'
+
+- name: Crear el OperatorGroup de {{ operators_item.name }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: "{{ operators_item.operator_group | default(operators_item.namespace) }}"
+        namespace: "{{ operators_item.namespace }}"
+      spec: "{{ {'targetNamespaces': [operators_item.namespace]} if operators_item.own_namespace | default(false) else {} }}"
+  when: operators_item.namespace != 'openshift-operators' and not (operators_item.skip_operator_group | default(false))
+
+- name: Suscribirse a {{ operators_item.name }}
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: "{{ operators_item.name }}"
+        namespace: "{{ operators_item.namespace }}"
+      spec:
+        name: "{{ operators_item.name }}"
+        channel: "{{ operators_item.channel }}"
+        source: "{{ operators_item.source }}"
+        sourceNamespace: openshift-marketplace
+        installPlanApproval: "{{ operators_install_plan_approval }}"
+
+- name: Esperar a que OLM resuelva {{ operators_item.name }}
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ operators_item.name }}"
+    namespace: "{{ operators_item.namespace }}"
+  register: operators_subscription
+  until: >-
+    operators_subscription.resources | length > 0
+    and (operators_subscription.resources[0].status.installedCSV | default('')) != ''
+  retries: "{{ operators_wait_retries }}"
+  delay: 10
+
+- name: Esperar a que este instalado {{ operators_item.name }}
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ operators_subscription.resources[0].status.installedCSV }}"
+    namespace: "{{ operators_item.namespace }}"
+  register: operators_csv
+  until: >-
+    operators_csv.resources | length > 0
+    and (operators_csv.resources[0].status.phase | default('')) == 'Succeeded'
+  retries: "{{ operators_wait_retries }}"
+  delay: 10

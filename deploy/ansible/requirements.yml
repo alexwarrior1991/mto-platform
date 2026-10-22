@@ -1,0 +1,6 @@
+# ansible-galaxy collection install -r requirements.yml -p collections
+collections:
+  - name: redhat.openshift
+    version: ">=4.0.0"
+  - name: kubernetes.core
+    version: ">=5.0.0"

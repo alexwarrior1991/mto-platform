@@ -1,0 +1,23 @@
+name: mto-gateway
+image:
+  repository: ghcr.io/alexwarrior1991/mto-gateway
+
+env:
+  # Sin perfil: el docker apunta a nombres de compose que aqui no existen.
+  SPRING_PROFILES_ACTIVE: default
+  # La audiencia la valida cada servicio con la suya; el gateway, firma, emisor y vigencia (su application.yaml).
+  KEYCLOAK_AUDIENCE_VALIDATION_ENABLED: "false"
+  MTO_CONFIGURATION_URL: http://mto-configuration:8080
+  MTO_STOCK_URL: http://mto-stock:8080
+  MTO_MAINTENANCE_URL: http://mto-maintenance:8080
+  MTO_USERS_URL: http://mto-users:8080
+  MTO_NOTIFICATION_URL: http://mto-notification:8080
+  MTO_RESOURCES_URL: http://mto-resources:8080
+  APP_CORS_ALLOWED_ORIGINS: "{{ .Values.global.frontendUrl }},{{ .Values.global.backofficeUrl }}"
+  # Detras del router de OpenShift, que reescribe las X-Forwarded-*.
+  SERVER_FORWARD_HEADERS_STRATEGY: framework
+
+# La API publica, para quien llama sin pasar por los frontales (el SPA y el backoffice llegan por el Service).
+route:
+  enabled: true
+  host: "mto-api.{{ .Values.global.appsDomain }}"

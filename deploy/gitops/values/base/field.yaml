@@ -1,0 +1,65 @@
+name: mto-field
+image:
+  repository: ghcr.io/alexwarrior1991/mto-field
+
+env:
+  # gRPC con TLS (application-grpc-tls.yml): el certificado y la clave, del secreto montado en /etc/mto-field/tls.
+  SPRING_PROFILES_ACTIVE: prod,grpc-tls
+  SPRING_GRPC_SERVER_PORT: "9090"
+  SPRING_GRPC_SERVER_REFLECTION_ENABLED: "false"
+  DATABASE_URL: jdbc:postgresql://mto-postgres-rw:5432/mto_field
+  APP_MAINTENANCE_ENABLED: "true"
+  MTO_MAINTENANCE_URL: http://mto-maintenance:8080
+  KEYCLOAK_CLIENT_ID: mto-field-api
+  KEYCLOAK_AUDIENCE: mto-field-api
+  KEYCLOAK_TOKEN_URI: "{{ .Values.global.keycloakUrl }}/realms/mto/protocol/openid-connect/token"
+  KEYCLOAK_SERVICE_CLIENT_ID: mto-field-svc
+  # El bus de replicas (cada pod es una replica: su id, el nombre del pod) y la telemetria hacia mto-resources.
+  APP_RABBITMQ_ENABLED: "true"
+  APP_FIELD_POSITIONS_ENABLED: "true"
+
+secretEnv:
+  DATABASE_USERNAME:
+    secret: mto-db-field
+    key: username
+  DATABASE_PASSWORD:
+    secret: mto-db-field
+    key: password
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    secret: mto-keycloak-client-secrets
+    key: KC_CLIENT_SECRET_MTO_FIELD_SVC
+
+extraPorts:
+  - name: grpc
+    port: 9090
+
+# Los streams duran la noche: 30 s de gracia de gRPC y 30 s del apagado de Spring, mas el adios al bus.
+terminationGracePeriodSeconds: 75
+
+# El certificado del servidor gRPC. Por defecto el serving cert de OpenShift (CA del servicio, nombre
+# mto-field.<proyecto>.svc); con certificate.enabled, uno de cert-manager con el host publico de la Route,
+# y entonces sin esta anotacion (values del entorno: service.annotations.<anotacion>: null).
+service:
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: mto-field-tls
+
+volumes:
+  - name: grpc-tls
+    secret:
+      secretName: mto-field-tls
+volumeMounts:
+  - name: grpc-tls
+    mountPath: /etc/mto-field/tls
+    readOnly: true
+
+# El gateway no hace de proxy gRPC: los dispositivos llegan por esta Route. Passthrough, porque el router no
+# habla HTTP/2 en claro con el pod y el TLS es del propio servidor; con un timeout de una noche.
+route:
+  enabled: true
+  host: "mto-field.{{ .Values.global.appsDomain }}"
+  targetPort: grpc
+  annotations:
+    haproxy.router.openshift.io/timeout: 12h
+    haproxy.router.openshift.io/timeout-tunnel: 12h
+  tls:
+    termination: passthrough

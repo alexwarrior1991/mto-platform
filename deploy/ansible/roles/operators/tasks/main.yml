@@ -1,0 +1,6 @@
+- name: Instalar cada operador del cluster
+  ansible.builtin.include_tasks: operator.yml
+  loop: "{{ operators_cluster | selectattr('enabled') | list }}"
+  loop_control:
+    loop_var: operators_item
+    label: "{{ operators_item.name }}"

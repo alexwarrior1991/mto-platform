@@ -1,0 +1,16 @@
+postgres:
+  instances: 3
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 4Gi
+rabbitmq:
+  replicas: 3
+  storage:
+    size: 20Gi
+keycloak:
+  instances: 2

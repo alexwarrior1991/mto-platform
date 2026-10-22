@@ -1,0 +1,8 @@
+- name: Revocar el token de la API
+  redhat.openshift.openshift_auth:
+    state: absent
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_api_key }}"
+    validate_certs: "{{ openshift_validate_certs }}"
+  when: openshift_auth_api_key is defined
+  no_log: true

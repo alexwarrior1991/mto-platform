@@ -5,7 +5,9 @@ Entorno de **desarrollo local** del dominio MTO: una sola infraestructura compar
 `mto-resources`, `mto-gateway`, `mto-backoffice` y `mto-frontend`, y el realm de Keycloak que los
 diez usan.
 
-No es el mecanismo de despliegue de entornos reales.
+Los entornos desplegados no salen de aqui sino de `deploy/`: OpenShift con varias replicas, preparado con
+Ansible y desplegado con Argo CD a partir de los mismos ficheros del realm (abajo, «Desplegar en
+OpenShift», y `deploy/README.md`).
 
 ## Por que existe
 
@@ -266,8 +268,9 @@ Esta es la parte que antes no tenia dueño. Ahora se ensambla en un orden fijo:
 | 5d | `mto-backoffice-partial-import.json` | backoffice | `mto-backoffice`, el cliente de login del backoffice web (confidencial, Authorization Code) con los audience mapper hacia los ocho API; no declara roles |
 | 6 | `keycloak/mto-ops-cross-service.json` | platform | `mto-ops`, que agrupa el Actuator de **los ocho** (y la bandeja, el registro y la administracion de `mto-notification`) |
 | 6b | `keycloak/mto-positions-cross-service.json` | platform | los perfiles de puesto `mto-position-*` (abajo), que nombran roles de seis API: detras de todas las parciales y delante de los usuarios de desarrollo, que los llevan |
+| 6c | `keycloak/mto-metrics-cross-service.json` | platform | `mto-metrics-svc`, la cuenta de servicio con la que Prometheus raspa `/actuator/prometheus` de los ocho API en OpenShift (los ServiceMonitor de `deploy/`): confidencial, solo `client_credentials`, con los ocho audience mapper; sus roles, en el paso 8 |
 | 7 | `mto-notification-dev.json` / `mto-configuration-dev.json` / `mto-stock-dev.json` / `mto-maintenance-dev.json` / `mto-users-dev.json` / `mto-field-dev.json` / `mto-resources-dev.json` / `mto-backoffice-dev.json` | cada servicio | usuarios de desarrollo (por `partialImport`; los de puesto, en `mto-resources-dev.json`) y secretos locales de las cuentas de servicio y del cliente `mto-backoffice` (por la API de administracion, sobre el cliente ya importado) |
-| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc`; `maintenance-read` y `maintenance-write` de `mto-maintenance-api` para `mto-field-svc`; `view-users`, `query-users` y `view-realm` para `mto-resources-svc`; `resources-telematics-write` de `mto-resources-api` para `mto-telematics-svc` |
+| 8 | *(API de administracion)* | platform | `stock-read` y `stock-write` para la cuenta de servicio `mto-maintenance-svc`; `view-users`, `query-users`, `manage-users`, `view-clients`, `query-clients` y `view-realm` de `realm-management` para `mto-users-svc`; `view-events`, `view-users`, `query-users`, `view-clients`, `query-clients` y `view-realm` para `mto-notification-svc`; `maintenance-read` y `maintenance-write` de `mto-maintenance-api` para `mto-field-svc`; `view-users`, `query-users` y `view-realm` para `mto-resources-svc`; `resources-telematics-write` de `mto-resources-api` para `mto-telematics-svc`; `ops-metrics` de los ocho API para `mto-metrics-svc` |
 | 9 | *(API de administracion)* | platform | los eventos del realm tal como los declara `mto-realm.json` (`events/config` y el atributo `adminEventsExpiration`) y, si se aplican los usuarios de desarrollo, el `smtpServer` hacia Mailpit de `mto-realm-local.json` |
 
 El paso 1 lo hace el contenedor al arrancar (`--import-realm`); del 1b al 9, `apply-partials.sh`.
@@ -300,15 +303,17 @@ lo comprueba en el CI contra un Keycloak de verdad (abajo).
 El 8 existe porque una importacion parcial no asigna roles a la cuenta de servicio de un cliente,
 y la parcial de un servicio tampoco deberia decidir por si sola que puede tocar en el almacen de
 otro —ni, en el caso de `mto-users`, que puede administrar del realm—; en un entorno desplegado se
-hace en la consola (Clients → `mto-maintenance-svc` / `mto-users-svc` / `mto-notification-svc` / `mto-field-svc` /
-`mto-resources-svc` / `mto-telematics-svc` → Service accounts roles). `mto-users-svc` lleva solo esos seis roles de `realm-management`: ni
+hace con el Job del realm de `deploy/`, que los pone como usuarios `service-account-*` sacados de la misma lista que
+comprueba `check_applied_realm.py` (`ROLES_DE_SERVICIO`). `mto-users-svc` lleva solo esos seis roles de `realm-management`: ni
 `manage-realm`, ni `manage-clients`, ni `realm-admin`, y nunca una credencial del realm `master`.
 `mto-notification-svc` es un lector: `view-events` para los eventos y los cinco de solo lectura del
 directorio para poner nombre y correo a una audiencia; nunca `manage-events` (ni reconfigura ni
 borra eventos) ni `manage-users`. `mto-resources-svc` tambien solo lee: los usuarios y los miembros de los
 perfiles de puesto (`view-realm` es lo que pide leer los miembros de un rol de realm), para
 `GET /api/resources/reports/position-discrepancies`. `mto-telematics-svc` es la pasarela de los GPS: solo
-`resources-telematics-write`, que no abre nada mas que `POST /telematics/positions`.
+`resources-telematics-write`, que no abre nada mas que `POST /telematics/positions`. `mto-metrics-svc` solo
+`ops-metrics` de cada API: lee las metricas y no puede tocar el outbox ni ningun otro endpoint de escritura del
+Actuator (`ops-write`).
 
 El 9 existe porque los eventos del realm son un ajuste del realm, no de un cliente, y ninguna
 parcial los trae. El `--import-realm` del paso 1 ya los aplica, pero solo al crear el realm: un
@@ -466,7 +471,8 @@ secretos **ni abra el password grant**, que los eventos del realm esten activado
 que `mto-notification` necesita y sin los de maquina, que todo cliente de login (`mto-frontend` y
 `mto-backoffice`) emita audiencia para los ocho API, que ningun cliente se declare dos veces con
 contenido distinto, que ningun texto se pase del ancho de su columna en Keycloak, que `mto-ops`
-cubra el Actuator de los ocho servicios, que los perfiles de puesto sean planos y se llamen
+cubra el Actuator de los ocho servicios, que `mto-metrics-svc` sea solo una cuenta de servicio y emita
+audiencia hacia todo API con `ops-metrics`, que los perfiles de puesto sean planos y se llamen
 `mto-position-*`, y que ningun usuario de desarrollo lleve un perfil ni entre en un grupo que
 todavia no existen cuando se importa.
 
@@ -490,6 +496,18 @@ parcial (flags, URIs, atributos y audience mapper), a cada secreto de desarrollo
 su cliente, a cada cuenta de servicio los roles que le concede el guion, y a los eventos del realm
 y al SMTP que sean los que declaran los ficheros. El CI lo ejecuta tras levantar el Keycloak del
 compose y aplicar las parciales, en el mismo job.
+
+Un entorno desplegado no lleva los ficheros de desarrollo, y sus URLs son otras. Para el:
+
+```bash
+python3 scripts/check_applied_realm.py --no-dev-users --overrides deploy/keycloak/overrides.example.json
+```
+
+`--no-dev-users` parte de `mto-realm.json` (no del local) y no espera ni usuarios, ni secretos de desarrollo,
+ni el SMTP de Mailpit; `--overrides` es lo que el entorno cambia (las URLs de `mto-frontend` y `mto-backoffice`,
+el SMTP...), el mismo fichero con el que `deploy/keycloak/build_realm_import.py` monta el realm que aplica
+keycloak-config-cli. Es lo que hace el Job de comprobacion del chart `mto-realm` tras cada sincronizacion, y
+el CI lo prueba contra un segundo Keycloak limpio: monta el realm, lo aplica dos veces y lo comprueba.
 
 ### Y que el stack entero hace lo que se espera
 
@@ -558,6 +576,24 @@ piden sus tokens a `localhost`.
 
 `scripts/smoke_notification.sh` sigue siendo manual: su peor caso ronda los 25 minutos y pide diez
 entre pasadas.
+
+## Desplegar en OpenShift
+
+`deploy/` lleva un entorno (staging o prod) a OpenShift con varias replicas de cada servicio; el detalle,
+en `deploy/README.md`.
+
+- **`deploy/ansible/`** prepara el cluster una vez por entorno: entra con `redhat.openshift.openshift_auth`,
+  instala los operadores (OpenShift GitOps, CloudNativePG, RabbitMQ Cluster Operator, cert-manager, ODF y,
+  en el proyecto, RHBK), crea el proyecto con su cuota, crea los secretos desde Ansible Vault (`no_log`) y
+  entrega el entorno a Argo CD con una Application raiz.
+- **`deploy/gitops/`** es lo que despliega Argo CD (App of Apps): la infraestructura (PostgreSQL, RabbitMQ,
+  Redis y Keycloak, por sus operadores), el realm (un Job con keycloak-config-cli y otro con
+  `check_applied_realm.py`) y cada servicio con su Deployment, Service, Route, HPA, PDB y ServiceMonitor.
+- **`deploy/keycloak/`** monta el realm de un entorno a partir de los mismos ficheros que
+  `apply-partials.sh`, en el mismo orden, sin los de desarrollo.
+
+Lo comprueba el job `deploy` del CI (`helm lint`, lo que renderizaria Argo CD en los dos entornos,
+`kubeconform`, `ansible-lint` y `--syntax-check`), y el camino del realm, el job `realm`.
 
 ## Parar
 

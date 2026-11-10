@@ -305,6 +305,12 @@ services:
       KEYCLOAK_CLIENT_ID: mto-configuration-api
       KEYCLOAK_AUDIENCE: mto-configuration-api
       KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET:?falta en .env, copiese .env.example}
+      # El secreto con el que firma los datos maestros y job.finished: el mismo de los consumidores,
+      # pero mto-configuration lo lee de otra variable que ellos (MTO_MESSAGING_SIGNATURE_SECRET). Sin
+      # pasarselo firmaba con SHA-256 simple aunque .env trajera el secreto, y con
+      # MESSAGING_SIGNATURE_MODE=REQUIRED todo lo suyo acababa en la DLQ de los cuatro consumidores.
+      # Solo publica, asi que no tiene modo.
+      MTO_MESSAGING_SIGNATURE_SECRET: ${MESSAGING_SIGNATURE_SECRET:-}
       # Los ficheros de los trabajos: el CSV de una exportacion y el informe de una importacion. Por
       # defecto son rutas relativas al directorio de trabajo de la imagen (/app), que hasta que la
       # imagen corrio con un UID del grupo 0 era de root y el usuario no podia crear nada alli. Donde

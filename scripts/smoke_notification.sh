@@ -268,8 +268,8 @@ else
   else
     mal "config.responsable no consigue token"
   fi
-  # Y tres fallos seguidos de config.lector. El realm no tiene proteccion de fuerza bruta, asi que
-  # no bloquea a nadie; en la fase 2a estos tres fallos seran UN access.login.streak.
+  # Y tres fallos seguidos de config.lector. La proteccion de fuerza bruta del realm bloquea a los
+  # diez (failureFactor), asi que estos tres no bloquean a nadie: son UN access.login.streak.
   for i in 1 2 3; do
     curl -sS -o /dev/null -X POST "$KC_URL/realms/$KC_REALM/protocol/openid-connect/token" \
       -d grant_type=password -d client_id=mto-frontend -d username=config.lector -d "password=incorrecta-$i"

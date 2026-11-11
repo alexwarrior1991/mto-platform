@@ -330,6 +330,16 @@ existe, Keycloak crea un rol vacio con ese nombre y la persona entra sin permiso
 ficheros de desarrollo van al final, detras de los perfiles de puesto que llevan los usuarios de
 puesto de `mto-resources-dev.json`.
 
+### La proteccion de fuerza bruta
+
+`mto-realm.json` (y el local, igual) la lleva activa (`bruteForceProtected`): a los diez fallos seguidos
+de una persona (`failureFactor`) Keycloak la bloquea un rato que crece con cada fallo de mas
+(`waitIncrementSeconds`, un minuto, hasta `maxFailureWaitSeconds`, un cuarto de hora), nunca para
+siempre (`permanentLockout: false`), y el recuento se olvida a las doce horas sin fallos. Sin ella
+Keycloak no emitia nunca `USER_DISABLED_BY_TEMPORARY_LOCKOUT`, y la regla `access-lockout` de
+`mto-notification` no avisaba de nada. La racha de tres fallos de `mto-notification` sigue avisando
+antes, sin bloquear.
+
 ### Los eventos del realm
 
 `mto-realm.json` (y el local, igual) activa los **eventos de acceso** (`eventsEnabled`, 7 dias de

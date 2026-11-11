@@ -215,7 +215,14 @@ done
 cd "$HERMANOS/mto-frontend"
 npm ci --no-audit --no-fund
 if [[ -n "${CI:-}" ]]; then
-  npx playwright install --with-deps chromium
+  # --with-deps instala con apt las librerias y las fuentes que le falten al runner. Si los espejos
+  # de Ubuntu no responden (ha pasado: el runner no los resolvia y el job moria aqui, sin correr una
+  # sola prueba), se instala solo el navegador: el runner ya trae las librerias, y si de verdad
+  # faltara alguna, Chromium no arranca y lo dicen las pruebas.
+  if ! npx playwright install --with-deps chromium; then
+    echo "AVISO: no se han podido instalar las dependencias de sistema de Playwright; se sigue solo con el navegador" >&2
+    npx playwright install chromium
+  fi
 else
   npx playwright install chromium
 fi

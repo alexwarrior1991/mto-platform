@@ -279,7 +279,9 @@ jobs:
       - name: Render both environments as Argo CD would
         run: |
           deploy/gitops/scripts/render.sh staging "$RUNNER_TEMP/render/staging"
-          deploy/gitops/scripts/render.sh prod "$RUNNER_TEMP/render/prod"
+          # Produccion no renderiza sin la etiqueta de cada imagen (el paso de abajo): aqui se le da una de
+          # ejemplo, para comprobar los charts y el resto de sus values.
+          RENDER_IMAGE_TAG=sha-0000000 deploy/gitops/scripts/render.sh prod "$RUNNER_TEMP/render/prod"
 
       - name: Validate the manifests
         run: |
@@ -297,6 +299,22 @@ jobs:
                --set route.enabled=true --set route.cookieName=x --set route.tls.termination=passthrough >/dev/null 2>&1; then
             echo "El chart acepto una Route passthrough con cookie de afinidad"; exit 1
           fi
+
+      # Produccion no sigue latest: sin etiqueta o con latest el chart no renderiza; con la de un commit, si,
+      # y los demas entornos siguen como estaban.
+      - name: Production refuses latest and an empty image tag
+        working-directory: deploy/gitops
+        run: |
+          render() { helm template x charts/mto-service --set name=mto-x --set image.repository=x "$@" >/dev/null 2>&1; }
+          if render --set global.environment=prod; then
+            echo "El chart acepto latest en produccion"; exit 1
+          fi
+          if render --set global.environment=prod --set-string image.tag=; then
+            echo "El chart acepto una imagen sin etiqueta en produccion"; exit 1
+          fi
+          render --set global.environment=prod --set-string image.tag=sha-0000000
+          render --set global.environment=staging
+          render
 
       - name: Set up Python
         uses: actions/setup-python@v6

@@ -5,6 +5,12 @@
 # kubeconform. Lo usa el job deploy del CI; en local hace falta helm.
 #
 #   deploy/gitops/scripts/render.sh staging /tmp/render-staging
+#
+# Produccion no renderiza sin la etiqueta de cada imagen (values/prod/<servicio>.yaml), como en Argo CD. Para
+# comprobar los charts y el resto de los values de prod antes de que esten puestas, RENDER_IMAGE_TAG da una de
+# ejemplo a todos los servicios (solo aqui: Argo CD no la ve):
+#
+#   RENDER_IMAGE_TAG=sha-0000000 deploy/gitops/scripts/render.sh prod /tmp/render-prod
 set -euo pipefail
 
 entorno=${1:?uso: render.sh <staging|prod> <directorio de salida>}
@@ -33,5 +39,8 @@ awk '
     [ -f "$chart/$fichero" ] && argumentos+=(-f "$chart/$fichero")
   done
   echo "$release: $(( ${#argumentos[@]} / 2 )) ficheros de values"
+  if [ -n "${RENDER_IMAGE_TAG:-}" ] && [ "$path" = "deploy/gitops/charts/mto-service" ]; then
+    argumentos+=(--set-string "image.tag=$RENDER_IMAGE_TAG")
+  fi
   "$helm" template "$release" "$chart" --namespace "$namespace" "${argumentos[@]}" > "$salida/$release.yaml"
 done

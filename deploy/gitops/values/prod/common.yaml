@@ -16,10 +16,10 @@ global:
     starttls: "true"
     user: mto-notificaciones
 
-# Promover a produccion es cambiar este tag (o el de un servicio, en su fichero) por el sha-<commit> que ya
-# paso por staging; latest solo hasta la primera promocion.
+# Produccion no sigue latest: aqui no hay etiqueta. Cada servicio lleva la suya en su fichero de este
+# directorio (image.tag: el sha-<commit> que publico su CI y ya paso por staging), y el chart no renderiza
+# el que no la tenga o diga latest (deploy/README.md, Promover a produccion).
 image:
-  tag: latest
   pullPolicy: IfNotPresent
 # El maximo cuenta en las conexiones a PostgreSQL (postgres.parameters.max_connections de mto-infra).
 hpa:

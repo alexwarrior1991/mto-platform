@@ -41,7 +41,7 @@ spec:
                     {{- include "mto-service.selector" . | nindent 20 }}
       containers:
         - name: {{ include "mto-service.name" . }}
-          image: "{{ required "image.repository es obligatorio" .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "mto-service.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

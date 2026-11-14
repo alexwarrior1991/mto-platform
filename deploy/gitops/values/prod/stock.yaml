@@ -1,0 +1,4 @@
+# La imagen de produccion de mto-stock: el sha-<commit> que publico su CI (ghcr.io/alexwarrior1991/mto-stock) y que
+# ya paso por staging. Vacia, o latest, el chart no renderiza (deploy/README.md, Promover a produccion).
+image:
+  tag: ""

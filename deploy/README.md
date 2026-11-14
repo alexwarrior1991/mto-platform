@@ -93,8 +93,8 @@ promover un entorno es cambiar la de su inventario. Cada hija espera a que la on
 
 Los values de cada Application se leen en capas, del general al particular, y uno que no existe se salta:
 `values/base/<fichero>` (lo que no cambia de un entorno a otro: variables, secretos que lee, puertos), luego
-`values/<entorno>/common.yaml` (las URLs publicas en `global`, la etiqueta de las imagenes, el HPA) y luego
-`values/<entorno>/<fichero>`. Las variables de entorno son un mapa, asi que las capas se mezclan, y cada valor
+`values/<entorno>/common.yaml` (las URLs publicas en `global`, el HPA y, en staging, la etiqueta de las
+imagenes) y luego `values/<entorno>/<fichero>` (en produccion, la etiqueta de la imagen de cada servicio). Las variables de entorno son un mapa, asi que las capas se mezclan, y cada valor
 pasa por `tpl`: `"{{ .Values.global.keycloakUrl }}/realms/mto"`. Una variable que queda vacia no se pone.
 `gitops/scripts/render.sh <entorno> <dir>` hace lo mismo que Argo CD, sin cluster.
 
@@ -174,6 +174,31 @@ Lo que cada servicio necesita para correr con mas de una, y donde esta:
 - Las conexiones a PostgreSQL: seis servicios con su pool de 10 y el HPA al maximo, mas Keycloak con 20 por
   instancia; `max_connections` de `mto-infra` lleva la cuenta.
 
+## Promover a produccion
+
+Staging sigue `latest`, la ultima imagen de `master` de cada servicio (`values/staging/common.yaml`).
+**Produccion no**: con `global.environment: prod` el chart `mto-service` no renderiza una imagen sin etiqueta
+o con `latest` (`mto-service.image`, en `_helpers.tpl`), y la Application de ese servicio queda sin
+sincronizar, con el motivo, en vez de desplegar lo ultimo que se publico. Cada servicio lleva su etiqueta en
+`values/prod/<servicio>.yaml` (`image.tag`), y **llegan vacias**: la primera promocion es rellenarlas.
+
+- **Que etiqueta.** El CI de cada servicio (su job de imagen, en cada push a `master`) publica en
+  `ghcr.io/alexwarrior1991/<servicio>` dos etiquetas: `latest` y `sha-<commit>`, el hash corto de ese commit
+  de `master` (`sha-1a2b3c4`; `type=sha,format=short` de `docker/metadata-action`). La de produccion es la
+  `sha-` de la imagen que staging tiene desplegada y probada:
+  `oc -n mto-staging get deploy mto-<servicio> -o jsonpath='{.spec.template.spec.containers[0].image}'` da la
+  imagen, y `oc -n mto-staging get pod -l app.kubernetes.io/name=mto-<servicio> -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'`
+  su digest, que es el de una de las `sha-` del paquete en GHCR.
+- **Donde.** En `values/prod/<servicio>.yaml`, `image.tag: sha-<commit>`, los diez: `notification`,
+  `configuration`, `stock`, `users`, `maintenance`, `resources`, `field`, `gateway`, `backoffice` y
+  `frontend`. Cada servicio la suya: no comparten commit.
+- **Como llega.** Un commit en este repositorio con esas etiquetas, y la revision que sigue produccion
+  (`argocd_target_revision` de `inventories/prod`), que es la de la raiz y la de sus hijas.
+- **Comprobarlo.** `deploy/gitops/scripts/render.sh prod /tmp/render/prod` renderiza como Argo CD: falla,
+  diciendo que servicio, mientras falte una. El CI renderiza produccion con una etiqueta de ejemplo
+  (`RENDER_IMAGE_TAG=sha-0000000`) para comprobar los charts y el resto de los values, asi que **no** avisa
+  de una etiqueta sin poner: eso lo dice el render sin la variable, y Argo CD.
+
 ## Metricas
 
 Cada servicio Spring lleva un ServiceMonitor que pide un token a Keycloak con `mto-metrics-svc` (OAuth2
@@ -202,6 +227,7 @@ kubeconform -strict -summary \
 (cd deploy/ansible && ansible-playbook -i inventories/staging site.yml --syntax-check && ansible-lint --offline site.yml roles)
 ```
 
-Es lo que hace el job `deploy` del CI, con los dos entornos. El job `realm` prueba el camino del realm contra
+Es lo que hace el job `deploy` del CI, con los dos entornos (produccion, con `RENDER_IMAGE_TAG`: sin las
+etiquetas de sus imagenes no renderiza, *Promover a produccion*). El job `realm` prueba el camino del realm contra
 un Keycloak limpio: `build_realm_import.py`, keycloak-config-cli dos veces y `check_applied_realm.py
 --no-dev-users --overrides`.

@@ -11,6 +11,8 @@ name: ""
 
 image:
   repository: ""
+  # En produccion (global.environment: prod) el chart rechaza latest y la etiqueta vacia: cada servicio
+  # lleva la suya, un sha-<commit>, en values/prod/<servicio>.yaml.
   tag: latest
   pullPolicy: IfNotPresent
 
